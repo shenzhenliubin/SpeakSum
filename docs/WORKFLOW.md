@@ -1,55 +1,145 @@
 # SpeakSum 开发工作流
 
-> 本项目采用 **GitHub Flow + Feature Branch** 策略，专为多 Agent 协作开发设计。
+> 本项目采用 **Git Flow + Git Worktree** 策略，专为多 Agent 并行协作开发设计。
 
 ## 分支模型
 
 ```
-main (受保护)
+main (生产分支，稳定)
   ↑
-feature/extract-speeches  ← Agent A
-feature/clean-text        ← Agent B
-feature/key-quotes        ← Agent C
-  ↓
-Pull Request → Code Review → Merge to main
+develop (集成分支，各 feature 合并到这里测试)
+  ↑
+feature/core-parser      ← Agent A worktree
+feature/text-cleaner     ← Agent B worktree
+feature/output-gen       ← Agent C worktree
 ```
 
-## 分支命名规范
+### 分支职责
 
-| 分支类型 | 命名格式 | 示例 |
-|---------|---------|------|
-| 功能开发 | `feature/<描述>` | `feature/extract-speeches` |
-| 缺陷修复 | `fix/<描述>` | `fix/regex-matching` |
-| 文档更新 | `docs/<描述>` | `docs/api-examples` |
-| 重构优化 | `refactor/<描述>` | `refactor/parser-class` |
-| 实验探索 | `exp/<描述>` | `exp/llm-prompts` |
+| 分支 | 用途 | 保护级别 |
+|------|------|----------|
+| `main` | 生产分支，始终可部署 | 受保护，需 PR 合并 |
+| `develop` | 集成分支，功能开发完成后先合并到这里测试 | 受保护，需 PR 合并 |
+| `feature/*` | 各 Agent 独立开发分支 | 自由提交 |
+
+## Worktree 布局
+
+```
+~/claudcode-project/SpeakSum/     # main 分支（主仓库）
+~/SpeakSum-wt/
+├── develop/                      # develop 分支（集成测试）
+├── feature-core-parser/          # Agent A 工作区
+├── feature-text-cleaner/         # Agent B 工作区
+├── feature-output-gen/           # Agent C 工作区
+└── feature-viz/                  # Agent D 工作区（可选）
+```
+
+### Worktree 优势
+
+- ✅ **并行工作**：各 Agent 在独立目录开发，互不干扰
+- ✅ **无需切换**：没有 `git checkout` 的上下文切换开销
+- ✅ **同时查看**：可以同时打开多个分支的代码进行对比
+- ✅ **独立测试**：每个 worktree 可以独立运行测试
+
+## 快速开始
+
+### 1. 查看已有 worktree
+
+```bash
+cd ~/claudcode-project/SpeakSum
+git worktree list
+```
+
+### 2. 各 Agent 开始开发
+
+**Agent A - 核心解析模块**：
+```bash
+cd ~/SpeakSum-wt/feature-core-parser
+# 直接开始编码，无需切换分支
+uv run python -m speaksum
+```
+
+**Agent B - 文本处理**：
+```bash
+cd ~/SpeakSum-wt/feature-text-cleaner
+# 直接开始编码
+```
+
+**Agent C - 输出生成**：
+```bash
+cd ~/SpeakSum-wt/feature-output-gen
+# 直接开始编码
+```
+
+### 3. 提交代码
+
+```bash
+# 在各自的 worktree 目录中执行
+git add .
+git commit -m "feat: your changes"
+git push -u origin feature/your-branch
+```
 
 ## 开发流程
 
-### 1. 创建功能分支
+### 阶段 1：Feature 开发（各 Agent 并行）
 
 ```bash
-# 确保本地 main 是最新的
-git checkout main
+# 各 Agent 在各自 worktree 开发
+# 定期提交和推送
+
+git add .
+git commit -m "feat: add speaker extraction logic"
+git push
+```
+
+### 阶段 2：合并到 develop（集成测试）
+
+```bash
+# 在 develop worktree 中操作
+cd ~/SpeakSum-wt/develop
+
+# 拉取最新 develop
+git pull origin develop
+
+# 合并 feature 分支（本地测试）
+git merge feature/core-parser
+
+# 运行测试
+uv run pytest
+uv run ruff check .
+
+# 如果测试通过，推送 develop
+git push origin develop
+```
+
+**或使用 PR 流程（推荐）**：
+1. 在 GitHub 创建 PR：`feature/core-parser` → `develop`
+2. Code Review（可以由其他 Agent 完成）
+3. 通过 CI 检查
+4. Squash Merge
+
+### 阶段 3：发布到 main（生产部署）
+
+```bash
+# develop 测试稳定后
+cd ~/claudcode-project/SpeakSum  # main worktree
+
+# 合并 develop 到 main
 git pull origin main
+git merge develop
 
-# 创建并切换到功能分支
-git checkout -b feature/your-feature-name
-
-# 推送分支到远程
-git push -u origin feature/your-feature-name
+# 打标签
+git tag v0.1.0
+git push origin main
+git push origin v0.1.0
 ```
 
-### 2. 开发规范
+## 提交信息规范
 
-**提交信息格式**（遵循 Conventional Commits）：
-```
-<type>: <description>
+**格式**：`<type>: <description>`
 
-[optional body]
-```
-
-类型说明：
+**类型说明**：
 - `feat`: 新功能
 - `fix`: 缺陷修复
 - `docs`: 文档更新
@@ -57,30 +147,23 @@ git push -u origin feature/your-feature-name
 - `test`: 测试相关
 - `chore`: 构建/工具
 
-示例：
+**示例**：
 ```bash
 git commit -m "feat: add speaker extraction from meeting text"
 git commit -m "fix: handle empty lines in transcript"
 git commit -m "refactor: split parser into separate module"
 ```
 
-### 3. 提交前检查清单
+## PR 流程
 
+### 创建 PR
+
+**从 feature → develop**：
 ```bash
-# 运行测试
-uv run pytest
-
-# 代码检查
-uv run ruff check .
-uv run mypy .
-
-# 格式化
-uv run ruff format .
+# 在 GitHub 创建 PR
+# Base: develop
+# Compare: feature/core-parser
 ```
-
-### 4. 创建 Pull Request
-
-**PR 标题格式**：`<type>: <description>`
 
 **PR 描述模板**：
 ```markdown
@@ -98,12 +181,12 @@ uv run ruff format .
 - 依赖 PR: #456
 ```
 
-### 5. 代码审查
+### 代码审查
 
 **审查要求**：
-- 至少 1 个 approving review（可以由其他 Agent 完成）
+- 至少 1 个 approving review
 - 所有 CI 检查通过
-- 与 main 分支无冲突
+- 与目标分支无冲突
 
 **审查检查项**：
 - [ ] 代码符合项目规范
@@ -111,98 +194,96 @@ uv run ruff format .
 - [ ] 文档已更新
 - [ ] 无明显的性能问题
 
-### 6. 合并
+### 合并方式
 
-**合并方式**：`Squash and Merge`
+**使用 Squash Merge**：保持 develop 历史整洁
+
+## 多 Agent 协作最佳实践
+
+### Agent 角色分配
+
+| Agent | Worktree | 职责 | 输出 |
+|-------|----------|------|------|
+| **Agent A** | `feature-core-parser` | 核心解析 | `SpeechExtractor`, `TextParser` |
+| **Agent B** | `feature-text-cleaner` | 文本处理 | `TextCleaner`, `LLMClient` |
+| **Agent C** | `feature-output-gen` | 输出生成 | `MarkdownGenerator`, `JSONGenerator` |
+| **Agent D** | `feature-viz` | 可视化 | `TimelineView`, `KnowledgeGraph` |
+| **Agent E** | `feature-tests` | 测试 | 单元测试、集成测试 |
+
+### 依赖管理
+
+**场景：Agent B 依赖 Agent A 的接口**
+
+```python
+# Agent B 在 feature-text-cleaner 中使用 mock
+# 等待 Agent A 合并到 develop 后再对接
+
+# tests/test_text_cleaner.py
+from unittest.mock import Mock
+
+def test_clean_speech():
+    mock_extractor = Mock()
+    mock_extractor.extract.return_value = ["测试文本"]
+    
+    cleaner = TextCleaner(extractor=mock_extractor)
+    result = cleaner.clean("测试文本呃...")
+    assert result == "测试文本"
+```
+
+### 冲突解决
+
+**场景：两个 feature 分支修改了同一文件**
 
 ```bash
-# 确保分支最新
-git checkout main
-git pull origin main
-git merge --squash feature/your-feature-name
+# 在 develop worktree 中解决
+cd ~/SpeakSum-wt/develop
+git pull origin develop
+git merge feature/agent-a-work
+git merge feature/agent-b-work
 
-# 或使用 GitHub UI 的 "Squash and merge"
+# 解决冲突后
+git add .
+git commit -m "merge: resolve conflicts between feature A and B"
+git push
 ```
 
-## 多 Agent 协作模式
+## 实用命令
 
-### 场景：并行开发多个功能
-
-```
-main
-├── feature/extract-speeches (Agent A)
-├── feature/clean-text (Agent B)
-├── feature/key-quotes (Agent C)
-└── feature/timeline-view (Agent D)
-```
-
-**协调原则**：
-1. **独立开发**：各 Agent 在自己的分支工作，互不干扰
-2. **及时同步**：每天从 main 拉取最新变更，解决冲突
-3. **小步快跑**：每个 PR 控制在 200-400 行变更
-4. **依赖声明**：在 PR 描述中明确依赖关系
-
-### 场景：处理依赖关系
-
-**方式 A：基于未合并的分支开发**（不推荐）
-```
-main ← feature/base (Agent A)
-         ↑
-    feature/dependent (Agent B)
-```
-
-**方式 B：串行开发**（推荐）
-```
-main ← feature/base (Agent A) ← feature/dependent (Agent B)
-```
-
-**方式 C：Mock 接口开发**（推荐）
-```
-# Agent A 和 Agent B 同时开发
-# Agent B 使用 mock/stub 代替真实实现
-
-main ← feature/base (Agent A)
-main ← feature/dependent-with-mock (Agent B)
-# 等 feature/base 合并后，Agent B 移除 mock
-```
-
-### Agent 任务分配建议
-
-| Agent | 职责 | 典型任务 |
-|-------|------|---------|
-| **Agent A - Core** | 核心解析模块 | 发言提取、文本分割、数据结构定义 |
-| **Agent B - NLP** | 文本处理 | 口语清理、错别字修正、LLM 集成 |
-| **Agent C - Output** | 输出生成 | Markdown/JSON 生成、模板系统 |
-| **Agent D - Viz** | 可视化 | 时间线、知识图谱、Web 界面 |
-| **Agent E - QA** | 测试质量 | 单元测试、集成测试、性能测试 |
-
-## 冲突解决
-
-### 场景：两个 Agent 修改了同一文件
+### Worktree 管理
 
 ```bash
-# Agent A 的变更已合并到 main
-# Agent B 需要更新自己的分支
+# 查看所有 worktree
+git worktree list
 
-git checkout feature/agent-b-work
-git fetch origin
-git rebase origin/main
+# 创建新 worktree
+git worktree add ~/SpeakSum-wt/feature-new -b feature/new-feature
 
-# 解决冲突
-# 1. 编辑冲突文件
-# 2. git add <file>
-# 3. git rebase --continue
+# 删除 worktree（分支保留）
+git worktree remove ~/SpeakSum-wt/feature-old
 
-# 强制推送（因为 rebase 改写了历史）
-git push --force-with-lease
+# 清理已删除的 worktree
+git worktree prune
 ```
 
-### 减少冲突的最佳实践
+### 跨 worktree 操作
 
-1. **职责分离**：不同 Agent 负责不同模块
-2. **接口优先**：先定义接口，再并行实现
-3. **配置分离**：使用配置文件而非硬编码
-4. **频繁同步**：每天多次从 main 拉取更新
+```bash
+# 从 main worktree 查看 develop 分支状态
+git --git-dir=~/SpeakSum-wt/develop/.git --work-tree=~/SpeakSum-wt/develop status
+
+# 更简单：直接 cd 到对应目录
+cd ~/SpeakSum-wt/develop && git status
+```
+
+### 同步更新
+
+```bash
+# 更新所有 worktree 到最新
+cd ~/claudcode-project/SpeakSum && git pull origin main
+cd ~/SpeakSum-wt/develop && git pull origin develop
+cd ~/SpeakSum-wt/feature-core-parser && git pull origin feature/core-parser
+# ... 其他 feature 分支
+```
 
 ## 发布流程
 
@@ -212,17 +293,15 @@ git push --force-with-lease
 MAJOR.MINOR.PATCH
 ```
 
-- `MAJOR`: 不兼容的 API 变更
-- `MINOR`: 向后兼容的功能添加
-- `PATCH`: 向后兼容的问题修复
-
 ### 发布步骤
 
 ```bash
-# 1. 更新版本号
-# 编辑 src/speaksum/__init__.py
+# 1. 在 develop worktree 确保所有功能已合并
+cd ~/SpeakSum-wt/develop
+git pull origin develop
 
-# 2. 更新 CHANGELOG.md
+# 2. 更新版本号
+# 编辑 src/speaksum/__init__.py
 
 # 3. 创建发布分支
 git checkout -b release/v0.2.0
@@ -231,34 +310,32 @@ git checkout -b release/v0.2.0
 git add .
 git commit -m "chore: bump version to 0.2.0"
 
-# 5. 合并到 main
-git checkout main
-git merge --no-ff release/v0.2.0
-git tag v0.2.0
+# 5. 在 main worktree 合并发布分支
+cd ~/claudcode-project/SpeakSum
+git pull origin main
+git merge release/v0.2.0
 
-# 6. 推送
+# 6. 打标签并推送
+git tag v0.2.0
 git push origin main
 git push origin v0.2.0
+
+# 7. 同步 develop
+cd ~/SpeakSum-wt/develop
+git merge main
+git push origin develop
 ```
 
-## 工具配置
-
-### 预提交钩子（可选）
-
-```bash
-# 创建 .git/hooks/pre-commit
-#!/bin/bash
-uv run ruff check .
-uv run mypy .
-uv run pytest
-```
-
-### CI/CD 配置
+## CI/CD 配置
 
 ```yaml
 # .github/workflows/ci.yml
 name: CI
-on: [push, pull_request]
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -271,40 +348,45 @@ jobs:
       - run: uv run mypy .
 ```
 
-## 快速参考
-
-```bash
-# 开始新功能
-git checkout main && git pull
-git checkout -b feature/name
-git push -u origin feature/name
-
-# 同步 main
-git checkout main && git pull
-git checkout feature/name
-git rebase main
-
-# 提交代码
-git add .
-git commit -m "feat: description"
-git push
-
-# 清理已合并分支
-git checkout main
-git branch -d feature/name
-git push origin --delete feature/name
-```
-
 ## 常见问题
 
-**Q: 分支应该存在多久？**  
-A: 理想情况下 1-3 天，最长不超过 1 周。长时间存在的分支更容易产生冲突。
+**Q: 一个 Agent 可以同时处理多个 feature 吗？**  
+A: 可以，为每个 feature 创建独立的 worktree。
 
-**Q: 如何处理大型重构？**  
-A: 分多个小 PR 进行，每个 PR 只改一部分，确保中间状态不会破坏功能。
+**Q: feature 分支应该存在多久？**  
+A: 理想 1-3 天，最长 1 周。完成后及时合并到 develop。
 
-**Q: 紧急修复怎么办？**  
-A: 从 main 创建 `hotfix/` 分支，修复后快速合并，同时同步到正在开发的功能分支。
+**Q: 如何处理紧急修复？**  
+A: 从 main 创建 `hotfix/` worktree，修复后合并到 main 和 develop。
 
-**Q: Agent 之间如何沟通？**  
-A: 使用 PR 描述、代码注释、以及专门的协作文档（如 `docs/COLLABORATION.md`）记录设计决策。
+**Q: worktree 占用空间太大？**  
+A: Git worktree 使用硬链接，实际占用空间很小。
+
+**Q: 如何在 VS Code 中同时打开多个 worktree？**  
+A: 使用 "Add Folder to Workspace" 功能，把多个 worktree 添加到同一个工作区。
+
+## 快速参考卡片
+
+```bash
+# 查看 worktree
+git worktree list
+
+# Agent 开发流程
+cd ~/SpeakSum-wt/feature-xxx
+git add .
+git commit -m "feat: xxx"
+git push
+
+# 合并到 develop
+cd ~/SpeakSum-wt/develop
+git pull
+git merge feature/xxx
+git push
+
+# 发布到 main
+cd ~/claudcode-project/SpeakSum
+git pull
+git merge develop
+git tag v0.x.x
+git push
+```
