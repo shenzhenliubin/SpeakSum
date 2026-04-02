@@ -997,6 +997,369 @@ LLM Prompt:
    - positive: ["好", "优秀", "成功", "赞同", "支持"]
    - negative: ["问题", "困难", "失败", "反对", "担心"]
    - 统计正负关键词数量，取差值
+```
+
+---
+
+## 8. 技术实现规范
+
+### 8.1 话题关联语义相似度实现
+
+**决策**: 使用 Embedding API + 缓存策略
+
+**实现细节**:
+
+```
+1. Embedding 计算流程
+   
+   新话题入库时:
+   - 提取话题名称（如"产品策略"）
+   - 调用 Embedding API 获取向量（1536维）
+   - 存储到 topic_embeddings 表
+   
+   话题关联计算时:
+   - 从新话题出发，计算与所有已有话题的 cosine 相似度
+   - 公式: similarity = dot_product(v1, v2) / (||v1|| * ||v2||)
+   - 只计算一次，结果存入 topic_relations 表
+   - 阈值: > 0.75 视为语义相关
+
+2. 缓存策略
+   
+   数据库表结构:
+   - topic_embeddings: topic_id, embedding_vector, created_at
+   - topic_relations: topic_a_id, topic_b_id, similarity_score, created_at
+   
+   更新触发:
+   - 新增话题时，计算与所有已有话题的关联
+   - 已有话题关联不重新计算（增量更新）
+
+3. API 成本控制
+   
+   - 单用户话题数通常 < 50
+   - 新增 1 个话题最多调用 1 次 Embedding API
+   - 关联计算使用本地向量运算，无额外 API 成本
+   - 预估: 每新增 10 个话题，消耗约 ¥0.01-0.02
+```
+
+### 8.2 知识图谱布局实现
+
+**决策**: 增量布局，保持已有话题位置稳定
+
+**实现细节**:
+
+```
+1. 布局数据存储
+   
+   数据库表结构:
+   - graph_layouts: 
+     - user_id
+     - layout_data: JSONB 存储所有节点坐标
+     - version: 布局版本号
+     - updated_at
+
+2. 增量布局算法
+   
+   新话题加入时:
+   a. 找出与之关联度最高的已有话题（引力中心）
+   b. 在引力中心周围寻找空位（螺旋搜索）
+   c. 距离 = 基础距离 / 关联度（关联越强，距离越近）
+   d. 检测碰撞，如有重叠则微调位置
+   
+   螺旋搜索算法:
+   ```
+   angle = 0
+   radius = base_radius
+   while collision_detected:
+       x = center_x + radius * cos(angle)
+       y = center_y + radius * sin(angle)
+       if not check_collision(x, y, new_topic_size):
+           return (x, y)
+       angle += 0.5  # 30度步进
+       radius += 5   # 逐步外扩
+   ```
+
+3. 前端渲染
+   
+   - 首次加载: 从后端获取完整布局数据
+   - 增量更新: WebSocket 推送新节点位置和关联
+   - 动画: 新节点从中心放大出现（300ms ease-out）
+   - 拖拽: 用户可手动调整节点位置，保存到后端
+```
+
+### 8.3 长文本分块一致性实现
+
+**决策**: 分块处理完后，统一调用 LLM 进行标签标准化
+
+**实现细节**:
+
+```
+1. 分块处理流程
+   
+   第 1 阶段 - 分块并行处理:
+   - 按发言分割文本
+   - 每块独立调用 LLM 提取标签
+   - 块1 → ["产品策略", "成本管理"]
+   - 块2 → ["产品方案", "用户增长"]
+   
+   第 2 阶段 - 标准化后处理:
+   - 收集所有块提取的原始标签
+   - 统一调用 LLM 进行标准化:
+     
+     Prompt: """
+     请将以下话题标签标准化，合并相似标签：
+     输入标签: ["产品策略", "成本管理", "产品方案", "用户增长"]
+     
+     规则:
+     1. 同义词合并（如"产品策略"和"产品方案"）
+     2. 使用最通用的表达作为标准名
+     3. 返回映射关系: {"原标签": "标准标签"}
+     
+     输出格式: {"产品策略": "产品策略", "产品方案": "产品策略", "成本管理": "成本管理", "用户增长": "用户增长"}
+     """
+   
+   第 3 阶段 - 标签替换:
+   - 根据映射关系，统一替换所有发言的标签
+   - 更新 topic 表，合并重复话题
+
+2. 一致性保证
+   
+   - 同一会议的所有发言在标准化后话题一致
+   - 跨会议的话题通过 Embedding 相似度判断是否合并
+   - 用户可手动调整标签映射关系
+```
+
+### 8.4 实时处理实现
+
+**决策**: Server-Sent Events (SSE) + 任务队列
+
+**实现细节**:
+
+```
+1. 架构组件
+   
+   ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+   │   Web App   │◀───▶│   API Server│◀───▶│ Task Queue  │
+   │   (React)   │ SSE │   (FastAPI) │     │  (Celery)   │
+   └─────────────┘     └─────────────┘     └──────┬──────┘
+                                                  │
+                                           ┌──────▼──────┐
+                                           │  LLM Worker │
+                                           │   (Kimi)    │
+                                           └─────────────┘
+
+2. 处理流程
+   
+   a. 用户上传文件 → API Server 接收
+   b. 创建任务记录 (status=pending)
+   c. 提交到 Celery 队列
+   d. 返回 task_id 给前端
+   e. 前端建立 SSE 连接: /api/tasks/{task_id}/stream
+   f. Worker 处理并发送进度事件:
+      - event: progress, data: {stage: "cleaning", percent: 45}
+      - event: completed, data: {meeting_id: "xxx"}
+      - event: error, data: {message: "xxx"}
+
+3. 断线重连
+   
+   - SSE 连接断开时，前端自动重连
+   - 重连后获取当前任务状态，继续显示进度
+   - 用户关闭浏览器后重新打开，可从历史记录恢复
+
+4. 并发控制
+   
+   - 单用户并发限制: 最多 3 个文件同时处理
+   - 全局队列长度限制: 防止系统过载
+   - 任务超时: 单文件 10 分钟，超时自动失败
+```
+
+### 8.5 数据存储实现
+
+**决策**: 使用 PostgreSQL 纯关系数据库，JSONB 存储图数据
+
+**实现细节**:
+
+```
+1. 数据库选型理由
+   
+   - 个人用户数据量小（< 1000 会议，< 100 话题）
+   - 关系查询为主（按用户、时间、话题筛选）
+   - 图谱只是可视化，不需要复杂图查询
+   - PostgreSQL JSONB 足够存储和查询图结构
+   - 减少运维复杂度（单一数据库）
+
+2. 核心表结构
+   
+   ```sql
+   -- 用户表
+   CREATE TABLE users (
+       id UUID PRIMARY KEY,
+       email VARCHAR(255) UNIQUE NOT NULL,
+       password_hash VARCHAR(255) NOT NULL,
+       created_at TIMESTAMP DEFAULT NOW()
+   );
+   
+   -- 会议表
+   CREATE TABLE meetings (
+       id UUID PRIMARY KEY,
+       user_id UUID REFERENCES users(id),
+       title VARCHAR(255),
+       date DATE,
+       source_file VARCHAR(255),
+       file_size INTEGER,
+       status VARCHAR(50), -- pending/processing/completed/error
+       created_at TIMESTAMP DEFAULT NOW()
+   );
+   
+   -- 发言表
+   CREATE TABLE speeches (
+       id UUID PRIMARY KEY,
+       meeting_id UUID REFERENCES meetings(id),
+       timestamp TIME,
+       speaker VARCHAR(100),
+       raw_text TEXT,
+       cleaned_text TEXT,
+       key_quotes JSONB, -- ["金句1", "金句2"]
+       topics JSONB, -- ["话题1", "话题2"]
+       sentiment VARCHAR(20)
+   );
+   
+   -- 话题表
+   CREATE TABLE topics (
+       id UUID PRIMARY KEY,
+       user_id UUID REFERENCES users(id),
+       name VARCHAR(100),
+       speech_count INTEGER DEFAULT 0,
+       first_appearance DATE,
+       last_appearance DATE,
+       embedding VECTOR(1536) -- pgvector 扩展
+   );
+   
+   -- 话题关联表
+   CREATE TABLE topic_relations (
+       id UUID PRIMARY KEY,
+       topic_a_id UUID REFERENCES topics(id),
+       topic_b_id UUID REFERENCES topics(id),
+       co_occurrence_score FLOAT,
+       temporal_score FLOAT,
+       semantic_score FLOAT,
+       total_score FLOAT,
+       UNIQUE(topic_a_id, topic_b_id)
+   );
+   
+   -- 图谱布局表
+   CREATE TABLE graph_layouts (
+       id UUID PRIMARY KEY,
+       user_id UUID REFERENCES users(id),
+       layout_data JSONB, -- {nodes: [...], edges: [...]}
+       version INTEGER DEFAULT 1,
+       updated_at TIMESTAMP DEFAULT NOW()
+   );
+   
+   -- 任务队列表（可选，如果用 Celery 则不需要）
+   CREATE TABLE processing_tasks (
+       id UUID PRIMARY KEY,
+       meeting_id UUID REFERENCES meetings(id),
+       status VARCHAR(50),
+       stage VARCHAR(50),
+       percent INTEGER,
+       error_message TEXT,
+       created_at TIMESTAMP DEFAULT NOW(),
+       updated_at TIMESTAMP DEFAULT NOW()
+   );
+   ```
+
+3. JSONB 图数据结构
+   
+   ```json
+   {
+     "nodes": [
+       {
+         "id": "topic_xxx",
+         "type": "topic",
+         "label": "产品策略",
+         "x": 100,
+         "y": 200,
+         "size": 12
+       },
+       {
+         "id": "speech_xxx",
+         "type": "speech",
+         "label": "成本效益分析...",
+         "x": 105,
+         "y": 230
+       }
+     ],
+     "edges": [
+       {
+         "source": "topic_xxx",
+         "target": "speech_xxx",
+         "type": "contains"
+       },
+       {
+         "source": "topic_xxx",
+         "target": "topic_yyy",
+         "type": "related",
+         "strength": 0.85
+       }
+     ]
+   }
+   ```
+
+4. 索引策略
+   
+   ```sql
+   -- 查询优化索引
+   CREATE INDEX idx_meetings_user_date ON meetings(user_id, date DESC);
+   CREATE INDEX idx_speeches_meeting ON speeches(meeting_id);
+   CREATE INDEX idx_topics_user ON topics(user_id);
+   CREATE INDEX idx_topic_relations_a ON topic_relations(topic_a_id);
+   CREATE INDEX idx_topic_relations_score ON topic_relations(total_score DESC);
+   
+   -- GIN 索引用于 JSONB 查询
+   CREATE INDEX idx_speeches_topics ON speeches USING GIN(topics);
+   ```
+```
+
+### 8.6 文件解析实现
+
+**决策**: 使用 python-docx 解析 docx，doc 格式使用转换工具
+
+**实现细节**:
+
+```
+1. 文件格式支持
+   
+   | 格式 | 处理方式 | 库/工具 |
+   |------|----------|---------|
+   | .txt | 直接读取 | Python 内置 open() |
+   | .md | 解析 frontmatter + 内容 | python-markdown |
+   | .docx | 解析 paragraph | python-docx |
+   | .doc | 转换为 docx 后解析 | antiword / libreoffice |
+
+2. docx 解析示例
+   
+   ```python
+   from docx import Document
+   
+   def parse_docx(file_path):
+       doc = Document(file_path)
+       full_text = []
+       for para in doc.paragraphs:
+           full_text.append(para.text)
+       return '\n'.join(full_text)
+   ```
+
+3. 编码处理
+   
+   - 自动检测编码: chardet 库
+   - 优先 UTF-8，其次 GBK/GB2312
+   - 解码失败时标记错误，提示用户转换编码
+
+4. 大文件处理
+   
+   - 流式读取，避免内存溢出
+   - 超过 10MB 的文件分块读取
+```
 
 粒度:
 - 单条发言级别: 快速分类
@@ -1031,7 +1394,7 @@ score = 0.4 × title_match + 0.4 × content_tf_idf + 0.2 × topic_match
 
 ---
 
-## 8. 错误处理策略
+## 9. 错误处理策略
 
 ### 8.1 用户视角的错误分类
 
@@ -1088,7 +1451,7 @@ score = 0.4 × title_match + 0.4 × content_tf_idf + 0.2 × topic_match
 
 ---
 
-## 9. 非功能需求
+## 10. 非功能需求
 
 ### 9.1 性能要求
 
@@ -1126,9 +1489,9 @@ score = 0.4 × title_match + 0.4 × content_tf_idf + 0.2 × topic_match
 
 ---
 
-## 10. 附录
+## 11. 附录
 
-### 10.1 术语表
+### 11.1 术语表
 
 | 术语 | 英文 | 定义 |
 |------|------|------|
@@ -1141,13 +1504,13 @@ score = 0.4 × title_match + 0.4 × content_tf_idf + 0.2 × topic_match
 | 口语清理 | Cleaning | 去除语气词和修正错别字的过程 |
 | 话题关联度 | Topic Association | 两个话题之间的相关性强弱 |
 
-### 10.2 相关文档
+### 11.2 相关文档
 
 - [BRD.md](./BRD.md) - 产品需求文档
 - [WORKFLOW.md](./WORKFLOW.md) - Git 工作流指南
 - [API 文档](./API.md) (待创建) - 后端接口规范
 
-### 10.3 设计决策记录
+### 11.3 设计决策记录
 
 | 日期 | 决策 | 原因 | 替代方案 |
 |------|------|------|----------|
@@ -1162,12 +1525,20 @@ score = 0.4 × title_match + 0.4 × content_tf_idf + 0.2 × topic_match
 | 2026-04-02 | 自动分块处理 | 支持大文件，用户无感知 | 限制文件大小 |
 | 2026-04-02 | 自动识别日期/标题 | 减少用户输入 | 强制手动输入 |
 | 2026-04-02 | 去掉图谱分享 | 聚焦个人使用场景 | 社交分享功能 |
+| **技术决策** | | | |
+| 2026-04-02 | **话题关联使用 Embedding API + 缓存** | 话题数量少可缓存，准确度高且成本可控 | 本地词向量模型 |
+| 2026-04-02 | **知识图谱使用增量布局** | 新话题在附近找空位，保持已有位置稳定 | 全量重新计算 |
+| 2026-04-02 | **长文本分块后 LLM 统一后处理** | 分块处理完后统一标准化标签，准确度最高 | 简单字符串匹配 |
+| 2026-04-02 | **SSE + 任务队列实现实时处理** | SSE实时推送进度，队列保证可靠性 | 简单轮询 |
+| 2026-04-02 | **使用 PostgreSQL 纯关系数据库** | 用户量不大时足够，JSONB存储图数据 | PostgreSQL + Neo4j |
+| 2026-04-02 | **doc/docx 使用 python-docx 解析** | 成熟库支持，doc格式需额外处理 | 转换为txt后处理 |
 
-### 10.4 变更记录
+### 11.4 变更记录
 
 | 版本 | 日期 | 作者 | 变更内容 |
 |------|------|------|----------|
 | 1.0 | 2026-04-02 | Product Design Agent | 初始版本，完整产品设计，包含所有计算逻辑 |
+| 1.1 | 2026-04-02 | Product Design Agent | 补充技术实现规范：Embedding缓存、增量布局、LLM后处理、SSE+队列、PostgreSQL存储 |
 
 ---
 
