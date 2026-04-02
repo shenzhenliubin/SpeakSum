@@ -75,10 +75,12 @@ erDiagram
 
 ```sql
 -- 用户表
+-- 密码哈希算法: Argon2id (推荐) 或 bcrypt (备选)
+-- Argon2id 参数: memory=65536KB, iterations=3, parallelism=4
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,  -- Argon2id 哈希结果
     display_name VARCHAR(100),
     avatar_url TEXT,
     is_active BOOLEAN DEFAULT true,
@@ -98,12 +100,18 @@ CREATE TABLE speaker_identities (
 );
 
 -- LLM模型配置表
+-- API Key 加密方案:
+-- 1. 算法: AES-256-GCM (经过认证的对称加密)
+-- 2. 密钥管理: 主密钥从环境变量 ENCRYPTION_KEY 读取
+-- 3. 密钥轮换: 支持新旧密钥并存解密，逐步迁移
+-- 4. 加密格式: base64(iv + ciphertext + auth_tag)
 CREATE TABLE model_configs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     provider VARCHAR(50) NOT NULL,  -- 'kimi', 'openai', 'claude', 'ollama'
     name VARCHAR(100) NOT NULL,     -- 显示名称
-    api_key_encrypted TEXT,         -- 加密存储的API Key
+    api_key_encrypted TEXT,         -- AES-256-GCM 加密后的 API Key
+    encryption_version INTEGER DEFAULT 1,  -- 加密方案版本，用于密钥轮换
     base_url VARCHAR(255),          -- API基础地址
     default_model VARCHAR(100) NOT NULL,  -- 默认模型名称
     context_length INTEGER,         -- 上下文长度
@@ -188,6 +196,10 @@ CREATE INDEX idx_speeches_is_target ON speeches(meeting_id, is_target_speaker);
 CREATE INDEX idx_speeches_timestamp ON speeches(meeting_id, timestamp);
 CREATE INDEX idx_speeches_topics ON speeches USING GIN(topics);
 CREATE INDEX idx_speeches_graph_node ON speeches(graph_node_id);
+
+-- 会议表索引
+CREATE INDEX idx_meetings_user_date ON meetings(user_id, meeting_date DESC);
+CREATE INDEX idx_meetings_user_status ON meetings(user_id, status);
 ```
 
 #### 1.3.3 话题与图谱表
@@ -3043,6 +3055,1021 @@ async def backup_database():
 
 ---
 
+## 7. 高级技术细节与优化
+
+### 7.1 知识图谱布局存储优化
+
+**问题**: JSONB 存储大图谱在节点数>1000时性能下降
+
+**解决方案**:
+
+1. **视口分页加载** (推荐)
+```python
+class GraphLayoutService:
+    async def get_viewport_nodes(
+        self,
+        user_id: UUID,
+        viewport: Viewport,  # 当前视口位置和缩放级别
+        buffer_ratio: float = 0.2  # 20% 缓冲区域
+    ) -> GraphLayout:
+        """仅加载视口内的节点"""
+        # 计算视口边界（包含缓冲）
+        visible_area = self._calculate_visible_area(viewport, buffer_ratio)
+        
+        # 查询可见节点
+        nodes = await self.db.query(
+            """
+            SELECT * FROM graph_nodes 
+            WHERE user_id = :user_id
+            AND x BETWEEN :x_min AND :x_max
+            AND y BETWEEN :y_min AND :y_max
+            """,
+            {
+                "user_id": user_id,
+                "x_min": visible_area.x_min,
+                "x_max": visible_area.x_max,
+                "y_min": visible_area.y_min,
+                "y_max": visible_area.y_max
+            }
+        )
+        
+        # 按需加载关联边
+        node_ids = {n.id for n in nodes}
+        edges = await self._get_edges_between_nodes(user_id, node_ids)
+        
+        return GraphLayout(nodes=nodes, edges=edges)
+```
+
+2. **增量更新策略**
+```python
+async def update_layout_incremental(
+    self,
+    user_id: UUID,
+    delta: LayoutDelta  # 仅包含变化的节点
+):
+    """增量更新，避免重写整个JSON"""
+    # 使用 PostgreSQL JSONB 操作符
+    await self.db.execute(
+        """
+        UPDATE graph_layouts 
+        SET layout_data = jsonb_set(
+            layout_data,
+            '{nodes}',
+            (
+                SELECT jsonb_agg(
+                    CASE 
+                        WHEN (node->>'id')::text = ANY(:changed_ids)
+                        THEN :new_values::jsonb->(node->>'id')
+                        ELSE node
+                    END
+                )
+                FROM jsonb_array_elements(layout_data->'nodes') AS node
+            )
+        ),
+        updated_at = NOW()
+        WHERE user_id = :user_id
+        """,
+        {"user_id": user_id, "changed_ids": delta.changed_ids}
+    )
+```
+
+### 7.2 Celery 任务改进方案
+
+**问题**: 嵌套 chain(group(chord(...))) 过于复杂，调试困难
+
+**改进方案**: 状态机驱动的分阶段处理
+
+```python
+# domain/processing_state.py
+from enum import Enum, auto
+
+class ProcessingStage(Enum):
+    PENDING = auto()
+    PARSING = auto()
+    EXTRACTING = auto()
+    CLEANING = auto()
+    TAGGING = auto()
+    BUILDING_GRAPH = auto()
+    COMPLETED = auto()
+    ERROR = auto()
+
+class MeetingProcessor:
+    """基于状态机的会议处理器"""
+    
+    STAGE_HANDLERS = {
+        ProcessingStage.PARSING: '_handle_parsing',
+        ProcessingStage.EXTRACTING: '_handle_extracting',
+        ProcessingStage.CLEANING: '_handle_cleaning',
+        ProcessingStage.TAGGING: '_handle_tagging',
+        ProcessingStage.BUILDING_GRAPH: '_handle_build_graph',
+    }
+    
+    async def process(self, meeting_id: UUID) -> None:
+        """主处理循环"""
+        meeting = await self.repo.get(meeting_id)
+        
+        while meeting.stage != ProcessingStage.COMPLETED:
+            handler_name = self.STAGE_HANDLERS.get(meeting.stage)
+            if not handler_name:
+                break
+                
+            handler = getattr(self, handler_name)
+            
+            try:
+                await handler(meeting)
+                meeting.advance_stage()
+                await self.repo.save(meeting)
+            except Exception as e:
+                await self._handle_error(meeting, e)
+                raise  # 让 Celery 处理重试
+    
+    async def _handle_cleaning(self, meeting: Meeting) -> None:
+        """口语清理阶段 - 支持分块并行"""
+        speeches = await self.speech_repo.get_uncleaned(meeting.id)
+        chunks = self.chunker.chunk_by_speeches(speeches)
+        
+        # 提交并行任务
+        tasks = [
+            clean_speech_chunk.delay(chunk.id, meeting.model_config)
+            for chunk in chunks
+        ]
+        
+        # 等待所有任务完成（使用 celery.result）
+        results = await self._wait_for_tasks(tasks, timeout=300)
+        
+        # 合并结果
+        for chunk, result in zip(chunks, results):
+            await self.speech_repo.update_cleaned(
+                chunk.speech_ids,
+                cleaned_text=result['cleaned_text'],
+                key_quotes=result['key_quotes']
+            )
+    
+    async def retry_stage(self, meeting_id: UUID, stage: ProcessingStage) -> None:
+        """从指定阶段重试"""
+        meeting = await self.repo.get(meeting_id)
+        meeting.stage = stage
+        meeting.error_count += 1
+        await self.repo.save(meeting)
+        
+        # 重新提交任务
+        process_meeting.delay(meeting_id)
+```
+
+### 7.3 LLM 流式响应支持
+
+**增强 LLMClient 接口**:
+
+```python
+# domain/llm_client.py
+from typing import AsyncIterator, Protocol
+
+class LLMClient(Protocol):
+    async def generate(
+        self,
+        messages: list[Message],
+        temperature: float = 0.7,
+        max_tokens: int | None = None
+    ) -> str:
+        ...
+    
+    async def generate_stream(
+        self,
+        messages: list[Message],
+        temperature: float = 0.7,
+        max_tokens: int | None = None
+    ) -> AsyncIterator[str]:
+        """流式生成，返回 token 迭代器"""
+        ...
+    
+    async def embed(self, text: str) -> list[float]:
+        ...
+
+# implementation/kimi_client.py
+class KimiClient:
+    async def generate_stream(
+        self,
+        messages: list[Message],
+        temperature: float = 0.7,
+        max_tokens: int | None = None
+    ) -> AsyncIterator[str]:
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=True  # 启用流式
+        )
+        
+        async for chunk in response:
+            if chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+
+# SSE 流式推送
+@app.get("/api/process/{task_id}/stream")
+async def process_stream(task_id: str):
+    async def event_generator():
+        async for update in task_service.subscribe_updates(task_id):
+            # 标准 SSE 格式
+            yield f"event: {update.type}\n"
+            yield f"data: {update.json()}\n\n"
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
+```
+
+**长轮询降级方案**:
+```python
+@app.get("/api/process/{task_id}/poll")
+async def process_poll(task_id: str, last_seq: int = 0):
+    """SSE 不可用时使用长轮询"""
+    # 等待最多 30 秒，有新数据立即返回
+    update = await task_service.wait_for_update(
+        task_id,
+        after_seq=last_seq,
+        timeout=30
+    )
+    return {"update": update, "seq": update.sequence}
+```
+
+### 7.4 Token 估算改进
+
+```python
+class TokenEstimator:
+    """改进的 Token 估算器"""
+    
+    def __init__(self, safety_margin: float = 0.2):
+        self.safety_margin = safety_margin
+        # 不同模型的 token 比例
+        self.ratios = {
+            "gpt-4": {"zh": 1.5, "en": 0.25, "punct": 0.1},
+            "claude": {"zh": 1.3, "en": 0.3, "punct": 0.1},
+            "kimi": {"zh": 1.2, "en": 0.3, "punct": 0.1},
+        }
+    
+    def estimate(self, text: str, model: str = "kimi") -> int:
+        """更精确的估算"""
+        ratio = self.ratios.get(model, self.ratios["kimi"])
+        
+        # 分类字符
+        chinese = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
+        english_words = len(re.findall(r"[a-zA-Z]+", text))
+        punctuation = sum(1 for c in text if c in "，。！？；：" + string.punctuation)
+        
+        # 计算
+        tokens = (
+            chinese * ratio["zh"] +
+            english_words * ratio["en"] +
+            punctuation * ratio["punct"]
+        )
+        
+        # 安全余量
+        return int(tokens * (1 + self.safety_margin))
+    
+    def precise_count(self, text: str, tokenizer: Tokenizer) -> int:
+        """使用实际 tokenizer 精确计数"""
+        return len(tokenizer.encode(text))
+```
+
+### 7.5 重试逻辑优化
+
+```python
+import random
+from tenacity import retry, stop_after_attempt, wait_exponential_jitter
+
+class LLMService:
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential_jitter(
+            initial=1,  # 初始 1 秒
+            max=60,     # 最大 60 秒
+            jitter=2    # 随机抖动 ±2 秒
+        ),
+        reraise=True
+    )
+    async def call_with_retry(
+        self,
+        client: LLMClient,
+        messages: list[Message]
+    ) -> str:
+        """带指数退避和抖动的重试"""
+        return await client.generate(messages)
+
+# Celery 任务重试配置
+@celery_app.task(
+    bind=True,
+    max_retries=3,
+    retry_backoff=True,      # 指数退避
+    retry_backoff_max=600,   # 最大 10 分钟
+    retry_jitter=True        # 添加抖动
+)
+def parse_file(self, meeting_id: str):
+    try:
+        ...
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=2 ** self.request.retries)
+```
+
+### 7.6 N+1 查询优化
+
+```python
+# 优化前：N+1 问题
+for meeting in meetings:
+    speeches = await speech_repo.get_by_meeting(meeting.id)  # N 次查询
+
+# 优化后：批量查询
+meeting_ids = [m.id for m in meetings]
+all_speeches = await speech_repo.get_by_meeting_ids(meeting_ids)  # 1 次查询
+
+# Repository 实现
+class SpeechRepository:
+    async def get_by_meeting_ids(
+        self,
+        meeting_ids: list[UUID]
+    ) -> dict[UUID, list[Speech]]:
+        """批量获取，按 meeting_id 分组返回"""
+        rows = await self.db.fetchall(
+            """
+            SELECT * FROM speeches 
+            WHERE meeting_id = ANY(:meeting_ids)
+            ORDER BY meeting_id, sequence_number
+            """,
+            {"meeting_ids": meeting_ids}
+        )
+        
+        result: dict[UUID, list[Speech]] = defaultdict(list)
+        for row in rows:
+            result[row.meeting_id].append(Speech.from_row(row))
+        
+        return result
+```
+
+### 7.7 话题关联计算优化
+
+```python
+class TopicRelationCalculator:
+    """优化的话题关联计算"""
+    
+    async def compute_incremental(
+        self,
+        user_id: UUID,
+        new_topic: Topic
+    ) -> None:
+        """仅计算新话题与已有话题的关联"""
+        existing_topics = await self.topic_repo.list_by_user(user_id)
+        
+        # 过滤掉已计算过关联的话题对
+        existing_relations = await self.relation_repo.get_for_topic(new_topic.id)
+        existing_partner_ids = {r.topic_b_id for r in existing_relations}
+        
+        topics_to_compare = [
+            t for t in existing_topics
+            if t.id != new_topic.id and t.id not in existing_partner_ids
+        ]
+        
+        # 并行计算（限制并发数）
+        semaphore = asyncio.Semaphore(10)
+        
+        async def compute_with_limit(other: Topic) -> TopicRelation | None:
+            async with semaphore:
+                relation = new_topic.compute_relation_with(other)
+                return relation if relation.total_score >= 0.2 else None
+        
+        relations = await asyncio.gather(*[
+            compute_with_limit(t) for t in topics_to_compare
+        ])
+        
+        # 批量保存
+        await self.relation_repo.batch_save([r for r in relations if r])
+    
+    async def compute_with_lsh(
+        self,
+        topics: list[Topic]
+    ) -> list[TopicRelation]:
+        """使用 LSH (局部敏感哈希) 加速大规模话题关联"""
+        # 仅对 embedding 相似度高的候选对计算完整关联
+        from sklearn.neighbors import NearestNeighbors
+        
+        embeddings = [t.embedding for t in topics]
+        
+        # 使用近似最近邻找到候选对
+        nbrs = NearestNeighbors(n_neighbors=10, metric='cosine')
+        nbrs.fit(embeddings)
+        
+        distances, indices = nbrs.kneighbors(embeddings)
+        
+        # 仅计算候选对的完整关联
+        relations = []
+        for i, neighbors in enumerate(indices):
+            for j, dist in zip(neighbors, distances[i]):
+                if i < j and dist < 0.3:  # 余弦相似度 > 0.7
+                    relation = topics[i].compute_relation_with(topics[j])
+                    relations.append(relation)
+        
+        return relations
+```
+
+### 7.8 限流设计
+
+```python
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+limiter = Limiter(key_func=get_remote_address)
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request, exc):
+    return JSONResponse(
+        status_code=429,
+        content={
+            "success": False,
+            "error": {
+                "code": "RATE_LIMITED",
+                "message": "请求过于频繁，请稍后再试",
+                "retry_after": exc.detail.get("retry_after", 60)
+            }
+        },
+        headers={"Retry-After": str(exc.detail.get("retry_after", 60))}
+    )
+
+# API 端点限流
+@app.post("/api/upload")
+@limiter.limit("10/minute")  # 上传限制
+async def upload_file(request: Request, ...):
+    ...
+
+@app.get("/api/meetings")
+@limiter.limit("100/minute")  # 查询更宽松
+async def list_meetings(request: Request, ...):
+    ...
+
+# 基于用户ID的限流（认证后）
+def get_user_id(request: Request) -> str:
+    return request.state.user.id if hasattr(request.state, "user") else get_remote_address(request)
+
+user_limiter = Limiter(key_func=get_user_id)
+
+@app.post("/api/process")
+@user_limiter.limit("3/minute")  # 单用户并发处理限制
+async def start_processing(request: Request, ...):
+    ...
+```
+
+### 7.9 文件安全扫描
+
+```python
+import clamav
+import magic
+from pathlib import Path
+
+class FileSecurityScanner:
+    """文件安全扫描器"""
+    
+    def __init__(self):
+        self.clamav = clamav.Client()
+        self.magic = magic.Magic(mime=True)
+    
+    ALLOWED_TYPES = {
+        "text/plain",           # .txt
+        "text/markdown",        # .md
+        "application/msword",   # .doc
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
+    }
+    
+    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+    
+    async def scan(self, file_path: Path) -> SecurityScanResult:
+        """完整安全扫描流程"""
+        
+        # 1. 文件大小检查
+        size = file_path.stat().st_size
+        if size > self.MAX_FILE_SIZE:
+            raise FileTooLargeError(f"文件超过 {self.MAX_FILE_SIZE / 1024 / 1024}MB 限制")
+        
+        # 2. MIME 类型检测（魔数检测，非扩展名）
+        mime_type = self.magic.from_file(str(file_path))
+        if mime_type not in self.ALLOWED_TYPES:
+            raise UnsupportedFileTypeError(f"不支持的文件类型: {mime_type}")
+        
+        # 3. 病毒扫描
+        scan_result = await self.clamav.scan(str(file_path))
+        if scan_result.infected:
+            raise VirusDetectedError(f"检测到病毒: {scan_result.virus_name}")
+        
+        # 4. 内容消毒（移除潜在的 XSS）
+        content = await self._sanitize_content(file_path, mime_type)
+        
+        return SecurityScanResult(
+            is_safe=True,
+            mime_type=mime_type,
+            size=size,
+            sanitized_content=content
+        )
+    
+    async def _sanitize_content(self, file_path: Path, mime_type: str) -> str:
+        """内容消毒"""
+        import bleach
+        
+        raw_content = file_path.read_text(encoding="utf-8", errors="ignore")
+        
+        # 移除潜在的脚本标签
+        cleaned = bleach.clean(
+            raw_content,
+            tags=[],  # 不保留任何 HTML 标签
+            strip=True
+        )
+        
+        return cleaned
+
+# 隔离环境解析（使用容器）
+async def parse_in_sandbox(file_path: Path) -> str:
+    """在隔离容器中解析文件"""
+    import docker
+    
+    client = docker.from_env()
+    
+    container = client.containers.run(
+        "speaksum/parser-sandbox",
+        command=f"parse {file_path.name}",
+        volumes={str(file_path.parent): {"bind": "/input", "mode": "ro"}},
+        network_mode="none",  # 禁止网络访问
+        mem_limit="128m",     # 内存限制
+        cpu_quota=50000,      # CPU 限制（50%）
+        detach=True,
+        auto_remove=True,
+    )
+    
+    result = container.wait()
+    logs = container.logs().decode()
+    
+    if result["StatusCode"] != 0:
+        raise ParseError(f"Sandbox parsing failed: {logs}")
+    
+    return logs
+```
+
+### 7.10 API Key 加密实现
+
+```python
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2
+import base64
+import os
+
+class APIKeyEncryption:
+    """API Key 加密服务"""
+    
+    def __init__(self):
+        # 主密钥从环境变量读取
+        master_key = os.environ.get("ENCRYPTION_KEY")
+        if not master_key:
+            raise ValueError("ENCRYPTION_KEY environment variable is required")
+        
+        self.fernet = Fernet(master_key.encode())
+    
+    def encrypt(self, api_key: str) -> tuple[str, int]:
+        """
+        加密 API Key
+        
+        Returns:
+            (encrypted_value, version)
+        """
+        encrypted = self.fernet.encrypt(api_key.encode())
+        return base64.b64encode(encrypted).decode(), 1
+    
+    def decrypt(self, encrypted_key: str, version: int = 1) -> str:
+        """解密 API Key"""
+        if version != 1:
+            # 支持密钥轮换：根据版本选择不同的解密方式
+            raise ValueError(f"Unsupported encryption version: {version}")
+        
+        decrypted = self.fernet.decrypt(base64.b64decode(encrypted_key))
+        return decrypted.decode()
+    
+    def rotate_key(self, old_key: str, new_key: str) -> None:
+        """
+        密钥轮换流程
+        
+        1. 新旧密钥并存
+        2. 逐步解密旧数据，用新密钥加密
+        3. 全部迁移后，下线旧密钥
+        """
+        # 实现密钥轮换逻辑
+        pass
+
+# 使用示例
+class ModelConfigRepository:
+    def __init__(self, encryption: APIKeyEncryption):
+        self.encryption = encryption
+    
+    async def save_config(self, config: ModelConfig) -> None:
+        if config.api_key:
+            encrypted, version = self.encryption.encrypt(config.api_key)
+            config.api_key_encrypted = encrypted
+            config.encryption_version = version
+            config.api_key = None  # 不保存明文
+        
+        await self.db.execute(...)
+    
+    async def get_config(self, config_id: UUID) -> ModelConfig:
+        row = await self.db.fetchone(...)
+        config = ModelConfig.from_row(row)
+        
+        if config.api_key_encrypted:
+            config.api_key = self.encryption.decrypt(
+                config.api_key_encrypted,
+                config.encryption_version
+            )
+        
+        return config
+```
+
+---
+
+## 8. 测试策略
+
+### 7.1 测试分层架构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        测试金字塔                            │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│     ▲                                                        │
+│    / \                   E2E 测试 (5%)                       │
+│   /   \          Playwright + 真实浏览器                      │
+│  /─────\                                                     │
+│ /         \                                                 │
+│/ Integration\        集成测试 (15%)                          │
+│   测试       TestContainers + httpx                          │
+│\            /                                                │
+│ \──────────/                                                 │
+│  \        /          单元测试 (80%)                          │
+│   \      /            pytest + pytest-asyncio                │
+│    \    /                                                    │
+│     \  /                                                     │
+│      \/                                                      │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 7.2 单元测试策略
+
+| 模块 | 测试重点 | 覆盖率目标 |
+|------|----------|------------|
+| **Domain** | 领域对象业务逻辑、状态转换 | 95%+ |
+| **Service** | 业务规则、数据流、错误处理 | 90%+ |
+| **Repository** | 查询逻辑、事务边界 | 85%+ |
+| **Parser** | 文件解析、编码检测 | 90%+ |
+| **LLM Client** | 请求构造、响应解析、重试逻辑 | 85%+ |
+
+**测试工具栈**:
+- `pytest` + `pytest-asyncio`: 异步测试支持
+- `pytest-cov`: 覆盖率报告
+- `pytest-mock`: Mock 支持
+- `factory-boy`: 测试数据工厂
+- `faker`: 假数据生成
+
+**Mock 策略**:
+```python
+# LLM 调用使用 VCR.py 录制/回放
+@pytest.mark.vcr
+def test_clean_speech():
+    result = llm_service.clean_speech("呃...我觉得")
+    assert result == "我觉得"
+
+# 外部 API 使用 respx (httpx mock)
+@respx.mock
+def test_kimi_api():
+    respx.post("https://api.moonshot.cn/v1/chat/completions").mock(
+        return_value=Response(200, json={"choices": [{"message": {"content": " cleaned"}}]})
+    )
+    ...
+```
+
+### 7.3 集成测试策略
+
+**测试范围**:
+- 数据库 Repository 层（使用 TestContainers）
+- API 端点（完整请求/响应链）
+- Celery 任务（内存 broker）
+- 文件解析（临时文件）
+
+**TestContainers 配置**:
+```python
+# conftest.py
+import pytest
+from testcontainers.postgres import PostgresContainer
+from testcontainers.redis import RedisContainer
+
+@pytest.fixture(scope="session")
+def postgres():
+    with PostgresContainer("postgres:15-alpine") as pg:
+        yield pg
+
+@pytest.fixture(scope="session")
+def redis():
+    with RedisContainer("redis:7-alpine") as redis:
+        yield redis
+```
+
+### 7.4 E2E 测试策略
+
+**测试场景**:
+1. 用户注册 → 登录 → 上传文件 → 查看处理结果
+2. 多文件批量上传 → 全部处理完成
+3. 知识图谱交互 → 节点点击 → 详情展示
+
+**Playwright 配置**:
+```typescript
+// playwright.config.ts
+export default defineConfig({
+  testDir: './e2e',
+  fullyParallel: true,
+  workers: process.env.CI ? 1 : undefined,
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+  ],
+});
+```
+
+### 7.5 LLM Prompt 测试策略
+
+**问题**: Prompt 微调可能导致输出格式变化，引发 JSON 解析失败
+
+**解决方案**:
+
+1. **Prompt 版本控制**: 每个 Prompt 有版本号，修改需回归测试
+2. **输出格式校验**: 使用 Pydantic 模型验证 LLM 输出
+3. **优雅降级**: 解析失败时保留原始文本，标记警告
+
+```python
+# 输出验证层
+class LLMResponseValidator:
+    def validate_cleaned_text(self, raw: str, cleaned: str) -> str:
+        """验证清理后的文本"""
+        # 检查是否丢失关键信息
+        if len(cleaned) < len(raw) * 0.3:
+            logger.warning(f"Cleaned text too short: {len(cleaned)} vs {len(raw)}")
+            return raw  # 降级使用原文
+        return cleaned
+    
+    def validate_key_quotes(self, response: str) -> list[str]:
+        """解析并验证金句 JSON"""
+        try:
+            data = json.loads(response)
+            quotes = data.get("quotes", [])
+            # 验证格式
+            return [q for q in quotes if isinstance(q, str) and len(q) <= 100]
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse key quotes: {response}")
+            return []  # 返回空列表降级
+```
+
+### 7.6 测试数据管理
+
+**工厂模式创建测试数据**:
+```python
+# factories.py
+import factory
+from speaksum.domain import Meeting, Speech
+
+class MeetingFactory(factory.Factory):
+    class Meta:
+        model = Meeting
+    
+    title = factory.Faker("sentence", nb_words=4)
+    meeting_date = factory.Faker("date_this_year")
+    status = "completed"
+
+class SpeechFactory(factory.Factory):
+    class Meta:
+        model = Speech
+    
+    raw_text = factory.Faker("paragraph", nb_sentences=3)
+    speaker = factory.Iterator(["张三", "李四", "我"])
+    is_target_speaker = factory.Faker("boolean")
+```
+
+---
+
+## 9. 监控与可观测性设计
+
+### 9.1 日志策略
+
+**日志分层**:
+| 层级 | 内容 | 保留期 | 工具 |
+|------|------|--------|------|
+| **应用日志** | 业务事件、错误追踪 | 30天 | structlog + Loki |
+| **访问日志** | API 请求/响应 | 7天 | Nginx + Filebeat |
+| **审计日志** | 敏感操作（登录、删除） | 1年 | PostgreSQL 单独表 |
+
+**结构化日志格式**:
+```python
+# 使用 structlog
+import structlog
+
+logger = structlog.get_logger()
+
+logger.info(
+    "meeting_processed",
+    meeting_id="uuid",
+    user_id="uuid",
+    duration_ms=45000,
+    tokens_consumed=15000,
+    stage="completed"
+)
+```
+
+### 9.2 指标收集 (Metrics)
+
+**Prometheus 指标定义**:
+
+```python
+# metrics.py
+from prometheus_client import Counter, Histogram, Gauge
+
+# 业务指标
+meetings_processed = Counter(
+    'speaksum_meetings_processed_total',
+    'Total meetings processed',
+    ['status', 'provider']  # success/failure, kimi/openai/claude
+)
+
+processing_duration = Histogram(
+    'speaksum_processing_duration_seconds',
+    'Time spent processing meetings',
+    buckets=[10, 30, 60, 120, 300, 600]
+)
+
+llm_tokens = Counter(
+    'speaksum_llm_tokens_total',
+    'LLM tokens consumed',
+    ['provider', 'operation']  # clean/extract/embed
+)
+
+# 系统指标
+queue_size = Gauge(
+    'speaksum_celery_queue_size',
+    'Current queue size',
+    ['queue_name']
+)
+```
+
+**关键监控指标**:
+| 指标 | 告警阈值 | 说明 |
+|------|----------|------|
+| API P95 延迟 | >500ms | 服务响应缓慢 |
+| 处理成功率 | <95% | 大量处理失败 |
+| LLM API 错误率 | >5% | 供应商服务异常 |
+| 队列积压 | >100 | Worker 处理能力不足 |
+| 磁盘使用率 | >80% | 存储空间不足 |
+
+### 9.3 分布式追踪
+
+**OpenTelemetry 配置**:
+```python
+# tracing.py
+from opentelemetry import trace
+from opentelemetry.exporter.jaeger.thrift import JaegerExporter
+from opentelemetry.sdk.trace import TracerProvider
+
+trace.set_tracer_provider(TracerProvider())
+tracer = trace.get_tracer(__name__)
+
+# 自动追踪 FastAPI 和 PostgreSQL
+# 关键业务操作手动追踪
+@tracer.start_as_current_span("process_meeting")
+async def process_meeting(meeting_id: str):
+    with tracer.start_as_current_span("clean_speeches") as span:
+        span.set_attribute("meeting.id", meeting_id)
+        span.set_attribute("chunk.count", 5)
+        # ...
+```
+
+**追踪范围**:
+- HTTP 请求全流程
+- Celery 任务执行
+- LLM API 调用（包括延迟和 token 数）
+- 数据库查询（慢查询标记）
+
+### 9.4 告警规则
+
+**Prometheus Alertmanager 配置**:
+```yaml
+groups:
+  - name: speaksum
+    rules:
+      - alert: HighErrorRate
+        expr: rate(speaksum_meetings_processed_total{status="error"}[5m]) > 0.1
+        for: 5m
+        annotations:
+          summary: "High meeting processing error rate"
+          
+      - alert: LLMAPIUnavailable
+        expr: rate(speaksum_llm_api_errors_total[5m]) > 0.05
+        for: 2m
+        annotations:
+          summary: "LLM API experiencing high error rate"
+          
+      - alert: QueueBacklog
+        expr: speaksum_celery_queue_size > 100
+        for: 10m
+        annotations:
+          summary: "Celery queue backlog detected"
+```
+
+---
+
+## 10. 数据迁移与部署策略
+
+### 10.1 数据库迁移策略
+
+**Alembic 迁移管理**:
+```bash
+# 初始化
+alembic init migrations
+
+# 生成迁移
+alembic revision --autogenerate -m "add user table"
+
+# 执行迁移
+alembic upgrade head
+
+# 回滚
+alembic downgrade -1
+```
+
+**迁移最佳实践**:
+1. **向后兼容**: 先加字段/索引，后改代码
+2. **分阶段部署**: 大表修改使用 `CONCURRENTLY`
+3. **数据回填**: 新字段默认值处理
+4. **回滚计划**: 每个迁移都有对应的 downgrade
+
+### 10.2 零停机部署
+
+**蓝绿部署流程**:
+```
+当前: Blue (v1.0)
+      ↓
+部署 Green (v1.1) 到独立环境
+      ↓
+运行健康检查 /smoke tests
+      ↓
+切换流量到 Green (Nginx 权重调整)
+      ↓
+监控 10 分钟
+      ↓
+无异常: 下线 Blue
+有异常: 切回 Blue
+```
+
+**数据库兼容性**:
+- 新代码必须兼容旧数据库 schema
+- 删除字段需等待至少一个版本
+
+### 10.3 数据备份与恢复
+
+**备份策略**:
+| 数据类型 | 频率 | 保留期 | 方式 |
+|----------|------|--------|------|
+| PostgreSQL | 每日 02:00 | 30天 | pg_dump + gzip |
+| 用户上传文件 | 实时 | 永久 | MinIO 跨区复制 |
+| Redis | 每小时 | 7天 | RDB 快照 |
+| 图谱布局 | 每日 | 7天 | JSON 导出 |
+
+**备份验证**:
+```python
+# 每月执行一次恢复测试
+async def test_backup_restore():
+    backup_file = await download_latest_backup()
+    await restore_to_staging(backup_file)
+    await run_smoke_tests()
+```
+
+### 10.4 灾难恢复 (DR)
+
+**RPO/RTO 目标**:
+- RPO (数据丢失容忍): < 1小时
+- RTO (恢复时间目标): < 4小时
+
+**恢复流程**:
+1. 从备份恢复 PostgreSQL
+2. 同步 MinIO 数据
+3. 重新初始化 Redis（从 DB 重建缓存）
+4. 验证系统健康状态
+
+---
+
 ## 附录
 
 ### A. 数据库迁移脚本
@@ -3059,7 +4086,7 @@ CREATE EXTENSION IF NOT EXISTS "pgvector";
 -- (见上文完整Schema定义)
 
 -- 创建索引
-CREATE INDEX CONCURRENTLY idx_meetings_user_date ON meetings(user_id, date DESC);
+CREATE INDEX CONCURRENTLY idx_meetings_user_date ON meetings(user_id, meeting_date DESC);
 CREATE INDEX CONCURRENTLY idx_speeches_meeting ON speeches(meeting_id);
 CREATE INDEX CONCURRENTLY idx_topics_user ON topics(user_id);
 CREATE INDEX CONCURRENTLY idx_topic_relations_a ON topic_relations(topic_a_id);
@@ -3081,6 +4108,9 @@ CREATE INDEX idx_meetings_completed ON meetings(user_id, meeting_date) WHERE sta
 -- GIN索引用于JSONB查询
 CREATE INDEX idx_speeches_key_quotes ON speeches USING GIN((key_quotes jsonb_path_ops));
 CREATE INDEX idx_meetings_participants ON meetings USING GIN(participants);
+
+-- 模型配置索引
+CREATE INDEX idx_model_configs_user ON model_configs(user_id, is_enabled);
 ```
 
 ### C. 参考资料
