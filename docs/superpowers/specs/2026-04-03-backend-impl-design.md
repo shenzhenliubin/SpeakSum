@@ -3,13 +3,30 @@
 **文档版本**: 1.0  
 **日期**: 2026-04-03  
 **作者**: 后端实现 Agent  
-**状态**: APPROVED
+**状态**: PENDING_REVIEW
 
 ---
 
 ## 1. 设计目标
 
 将现有的 CLI 骨架项目扩展为完整的 FastAPI 异步 Web 后端，实现会议文件上传、发言提取、口语清理、话题标签、知识图谱构建等核心功能，并提供 RESTful API 供前端调用。
+
+---
+
+## 1.1 范围说明
+
+本次后端实现严格基于任务描述中的产出要求，以下功能作为 **MVP 优先实现**：
+- 核心流程：上传 → 解析 → 提取发言 → 清理 → 标签 → 返回结果
+- 指定的 API 路由（upload, meetings, speeches, knowledge_graph, settings）
+- 多供应商 LLM 客户端与文本处理服务
+- Celery 异步任务管道
+
+以下功能基于任务要求 **不在本次实现范围内**，留待后续迭代：
+- **认证路由** (`/api/auth/*`)：任务仅要求 `core/security.py` 提供 JWT 处理，不实现注册/登录 API
+- **导出 API** (`/api/export/*`)：任务未列出导出端点
+- **说话人身份管理 API**：任务未在 API 列表中要求
+- **MinIO 对象存储**：任务要求本地文件上传路径配置，暂未集成 MinIO
+- **Alembic 迁移脚本**：任务标注为"可选"，本次不生成具体 migration 目录
 
 ---
 
@@ -97,8 +114,8 @@ erDiagram
 | 路由文件 | 端点 | 方法 | 说明 |
 |----------|------|------|------|
 | `upload.py` | `/api/v1/upload` | POST | 上传会议纪要文件，返回 task_id |
-| `upload.py` | `/api/v1/upload/{task_id}/status` | GET | 轮询查询处理进度 |
-| `meetings.py` | `/api/v1/meetings` | GET | 会议列表（分页、搜索） |
+| `upload.py` | `/api/v1/upload/{task_id}/status` | GET | SSE 实时推送 + 轮询降级查询处理进度 |
+| `meetings.py` | `/api/v1/meetings` | GET | 会议列表（分页、搜索：按 title / speaker / topic 模糊匹配） |
 | `meetings.py` | `/api/v1/meetings/{meeting_id}` | GET | 会议详情（含 speeches） |
 | `meetings.py` | `/api/v1/meetings/{meeting_id}` | DELETE | 删除会议（级联删除 speeches） |
 | `speeches.py` | `/api/v1/meetings/{meeting_id}/speeches` | GET | 某会议下的发言列表 |
@@ -119,6 +136,7 @@ erDiagram
 - `parse_md(file_path)`：读取内容（暂不支持 frontmatter 深度解析）
 - `parse_docx(file_path)`：使用 `python-docx` 读取 paragraphs
 - `extract_speeches(text, target_speaker)`：基于正则 `[HH:MM:SS] 说话人：内容` 提取发言列表
+- `validate_file_type(file_path, allowed_types)`：使用 `python-magic` 检测 MIME 类型，白名单限制为 `.txt` / `.md` / `.docx`
 
 ### 5.2 LLM 客户端 (`llm_client.py`)
 
@@ -160,9 +178,11 @@ erDiagram
 3. **口语清理** → 调用 LLM 逐段清理
 4. **标签提取** → 为每段发言提取话题
 5. **构建图谱** → 更新 topic / topic_relation / graph_layout
-6. 每步更新进度到 Redis（供轮询接口读取）
+6. 每步更新进度到 Redis；同时通过 Celery 信号机制将进度写入 Redis Pub/Sub 通道，供 SSE 流推送。SSE 连接由 `upload.py` 的 `/api/v1/upload/{task_id}/stream` 端点维护，作为轮询的增强方案。
 
 状态流转：`PENDING` → `PROCESSING` → `SUCCESS` / `FAILED`
+
+**Celery 中调用 async LLM 的策略**：在同步 Celery task 内部，通过 `asyncio.run()` 或 `asgiref.sync.async_to_sync()` 桥接调用 `llm_client` 的 `async` 方法。为简化测试，Celery 配置 `task_always_eager=True`。
 
 ### 6.2 `update_knowledge_graph_task(user_id)`
 
@@ -202,7 +222,7 @@ erDiagram
 
 | 测试文件 | 覆盖范围 |
 |----------|----------|
-| `tests/conftest.py` | async DB fixture (SQLite 内存)、TestClient fixture、mock LLM fixture |
+| `tests/conftest.py` | async DB fixture (SQLite 内存)、TestClient fixture、mock LLM fixture、`get_db` override |
 | `tests/test_models.py` | 模型创建、relationship、级联删除 |
 | `tests/test_api_upload.py` | 上传接口、任务状态轮询 |
 | `tests/test_api_meetings.py` | 会议列表、详情、删除 |
@@ -212,6 +232,8 @@ erDiagram
 ### 8.2 测试原则
 - 外部依赖全部 Mock（LLM API、文件系统）
 - 数据库使用 SQLite `:memory:`（通过 `create_async_engine("sqlite+aiosqlite:///:memory:")`）
+- **pgvector 兼容处理**：测试 fixture 中，对 `topics.embedding` 列使用 `TypeDecorator` 或 Mock 覆盖，在 SQLite 测试时将其替换为普通 `TEXT`（存储 JSON 化的向量），避免 pgvector 特有类型在 SQLite 中不可用
+- FastAPI `app.dependency_overrides[get_db] = override_get_db` 确保测试使用独立 session
 - 使用 `pytest.mark.asyncio` 测试异步代码
 - 目标覆盖率 **>= 80%**
 
@@ -237,7 +259,7 @@ uv add fastapi uvicorn python-multipart \
     celery redis \
     openai anthropic httpx \
     pydantic-settings python-docx python-magic chardet \
-    python-jose passlib python-dateutil
+    python-jose passlib python-dateutil cryptography
 ```
 
 ### 新增开发依赖
