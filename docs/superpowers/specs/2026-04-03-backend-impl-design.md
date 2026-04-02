@@ -28,6 +28,11 @@
 - **MinIO 对象存储**：任务要求本地文件上传路径配置，暂未集成 MinIO
 - **Alembic 迁移脚本**：任务标注为"可选"，本次不生成具体 migration 目录
 
+**认证策略（MVP）**：
+- 所有业务 API 路由均使用 `Depends(get_current_user)` 注入当前用户
+- MVP 阶段不实现注册/登录，测试和演示通过 `core/security.py` 预生成测试 Token 或 Header 方式绕过
+- 数据库查询强制附加 `user_id` 过滤，保证数据隔离
+
 ---
 
 ## 2. 架构设计
@@ -113,18 +118,19 @@ erDiagram
 
 | 路由文件 | 端点 | 方法 | 说明 |
 |----------|------|------|------|
-| `upload.py` | `/api/v1/upload` | POST | 上传会议纪要文件，返回 task_id |
-| `upload.py` | `/api/v1/upload/{task_id}/status` | GET | SSE 实时推送 + 轮询降级查询处理进度 |
-| `meetings.py` | `/api/v1/meetings` | GET | 会议列表（分页、搜索：按 title / speaker / topic 模糊匹配） |
-| `meetings.py` | `/api/v1/meetings/{meeting_id}` | GET | 会议详情（含 speeches） |
-| `meetings.py` | `/api/v1/meetings/{meeting_id}` | DELETE | 删除会议（级联删除 speeches） |
-| `speeches.py` | `/api/v1/meetings/{meeting_id}/speeches` | GET | 某会议下的发言列表 |
-| `speeches.py` | `/api/v1/speeches/{speech_id}` | GET | 发言详情 |
-| `speeches.py` | `/api/v1/speeches/{speech_id}` | PATCH | 更新发言（手动修正 cleaned_text/topics） |
-| `knowledge_graph.py` | `/api/v1/knowledge-graph` | GET | 获取当前用户的知识图谱数据（nodes + edges） |
-| `knowledge_graph.py` | `/api/v1/knowledge-graph/topics/{topic_id}/speeches` | GET | 某话题下的发言列表 |
-| `settings.py` | `/api/v1/settings/model` | GET | 获取模型配置列表 |
-| `settings.py` | `/api/v1/settings/model` | PUT | 更新模型配置 |
+| `upload.py` | `/api/v1/upload` | POST | 上传会议纪要文件，返回 task_id（需 `Depends(get_current_user)`） |
+| `upload.py` | `/api/v1/upload/{task_id}/status` | GET | 轮询查询处理进度（返回 JSON）（需认证） |
+| `upload.py` | `/api/v1/upload/{task_id}/stream` | GET | SSE 实时推送处理进度（EventSource）（需认证） |
+| `meetings.py` | `/api/v1/meetings` | GET | 会议列表（分页、搜索：按 title / speaker / topic 模糊匹配）（需认证） |
+| `meetings.py` | `/api/v1/meetings/{meeting_id}` | GET | 会议详情（含 speeches）（需认证） |
+| `meetings.py` | `/api/v1/meetings/{meeting_id}` | DELETE | 删除会议（级联删除 speeches）（需认证） |
+| `speeches.py` | `/api/v1/meetings/{meeting_id}/speeches` | GET | 某会议下的发言列表（需认证） |
+| `speeches.py` | `/api/v1/speeches/{speech_id}` | GET | 发言详情（需认证） |
+| `speeches.py` | `/api/v1/speeches/{speech_id}` | PATCH | 更新发言（手动修正 cleaned_text/topics）（需认证） |
+| `knowledge_graph.py` | `/api/v1/knowledge-graph` | GET | 获取当前用户的知识图谱数据（nodes + edges）（需认证） |
+| `knowledge_graph.py` | `/api/v1/knowledge-graph/topics/{topic_id}/speeches` | GET | 某话题下的发言列表（需认证） |
+| `settings.py` | `/api/v1/settings/model` | GET | 获取模型配置列表（需认证） |
+| `settings.py` | `/api/v1/settings/model` | PUT | 更新模型配置（需认证） |
 
 ---
 
@@ -135,8 +141,11 @@ erDiagram
 - `parse_txt(file_path)`：自动检测编码（UTF-8 / GBK），读取文本
 - `parse_md(file_path)`：读取内容（暂不支持 frontmatter 深度解析）
 - `parse_docx(file_path)`：使用 `python-docx` 读取 paragraphs
+- `parse_doc(file_path)`：使用 `antiword` 或 `libreoffice --headless --convert-to docx` 转换为 `.docx` 后解析（优先尝试系统命令 `antiword`）
 - `extract_speeches(text, target_speaker)`：基于正则 `[HH:MM:SS] 说话人：内容` 提取发言列表
-- `validate_file_type(file_path, allowed_types)`：使用 `python-magic` 检测 MIME 类型，白名单限制为 `.txt` / `.md` / `.docx`
+- `validate_file_type(file_path, allowed_types)`：使用 `python-magic` 检测 MIME 类型，白名单限制为 `.txt` / `.md` / `.doc` / `.docx`
+
+**会议搜索实现策略**：`GET /api/v1/meetings` 的 `q` 参数通过 SQLAlchemy `selectinload` 或 `joinedload` 加载关联的 `speeches`，在 Python 层对 `meeting.title`、`speech.speaker`、`speech.topics (JSONB)`、`speech.raw_text` 进行模糊匹配并聚合评分（标题匹配权重 0.4，内容匹配 0.4，话题匹配 0.2）。数据库层对 `meetings.title` 和 `speeches.raw_text` 建立 GIN / trigram 索引（PostgreSQL `pg_trgm`），确保响应 `<500ms`。
 
 ### 5.2 LLM 客户端 (`llm_client.py`)
 
@@ -178,11 +187,13 @@ erDiagram
 3. **口语清理** → 调用 LLM 逐段清理
 4. **标签提取** → 为每段发言提取话题
 5. **构建图谱** → 更新 topic / topic_relation / graph_layout
-6. 每步更新进度到 Redis；同时通过 Celery 信号机制将进度写入 Redis Pub/Sub 通道，供 SSE 流推送。SSE 连接由 `upload.py` 的 `/api/v1/upload/{task_id}/stream` 端点维护，作为轮询的增强方案。
+6. 每步更新进度到 Redis；同时通过 Celery 信号机制将进度写入 Redis Pub/Sub 通道，供 SSE 流推送。SSE 连接由 `upload.py` 的 `/api/v1/upload/{task_id}/stream` 端点维护。
 
 状态流转：`PENDING` → `PROCESSING` → `SUCCESS` / `FAILED`
 
-**Celery 中调用 async LLM 的策略**：在同步 Celery task 内部，通过 `asyncio.run()` 或 `asgiref.sync.async_to_sync()` 桥接调用 `llm_client` 的 `async` 方法。为简化测试，Celery 配置 `task_always_eager=True`。
+**Celery 中调用 async LLM 的策略**：在同步 Celery task 内部，通过 `asyncio.run()` 或 `asgiref.sync.async_to_sync()` 桥接调用 `llm_client` 的 `async` 方法。
+
+**测试配置**：仅在测试环境（`pytest` fixture / `conftest.py`）中设置 `task_always_eager=True`，生产环境保持异步任务队列。
 
 ### 6.2 `update_knowledge_graph_task(user_id)`
 
@@ -197,10 +208,13 @@ erDiagram
 使用 `pydantic-settings` 的 `SettingsConfigDict(env_file=".env")`：
 - `DATABASE_URL`
 - `REDIS_URL`
-- `SECRET_KEY`
+- `SECRET_KEY`（用于 JWT 签名）
+- `ENCRYPTION_KEY`（用于 Fernet 对称加密 API Key，与 SECRET_KEY 分离）
 - `UPLOAD_DIR`
 - `MAX_UPLOAD_SIZE`
 - `KIMI_API_KEY`, `OPENAI_API_KEY`, `CLAUDE_API_KEY`
+
+**API Key 加密策略**：使用 `cryptography.fernet.Fernet` 对 `user_model_configs.api_key_encrypted` 进行对称加解密。`ENCRYPTION_KEY` 从环境变量读取，生产环境由运维统一管理。
 
 ### 7.2 `core/database.py`
 
