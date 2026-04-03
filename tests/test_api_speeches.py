@@ -23,7 +23,7 @@ async def sample_meeting_with_speeches(db_session: AsyncSession, test_user: User
     await db_session.refresh(speech2)
 
     # Store speech IDs for later use
-    meeting._speech_ids = [speech1.id, speech2.id]
+    meeting._speech_ids = [speech1.id, speech2.id]  # type: ignore[attr-defined]
     return meeting
 
 
@@ -36,7 +36,7 @@ def test_list_speeches(authorized_client: TestClient, sample_meeting_with_speech
 
 
 def test_get_speech(authorized_client: TestClient, sample_meeting_with_speeches: Meeting) -> None:
-    speech_id = sample_meeting_with_speeches._speech_ids[0]
+    speech_id = sample_meeting_with_speeches._speech_ids[0]  # type: ignore[attr-defined]
     resp = authorized_client.get(f"/api/v1/speeches/{speech_id}")
     assert resp.status_code == 200
     data = resp.json()
@@ -44,7 +44,7 @@ def test_get_speech(authorized_client: TestClient, sample_meeting_with_speeches:
 
 
 def test_update_speech(authorized_client: TestClient, sample_meeting_with_speeches: Meeting) -> None:
-    speech_id = sample_meeting_with_speeches._speech_ids[0]
+    speech_id = sample_meeting_with_speeches._speech_ids[0]  # type: ignore[attr-defined]
     resp = authorized_client.patch(
         f"/api/v1/speeches/{speech_id}",
         json={"cleaned_text": "updated", "sentiment": "positive"}
@@ -56,7 +56,7 @@ def test_update_speech(authorized_client: TestClient, sample_meeting_with_speech
 
 
 def test_update_speech_invalid_sentiment(authorized_client: TestClient, sample_meeting_with_speeches: Meeting) -> None:
-    speech_id = sample_meeting_with_speeches._speech_ids[0]
+    speech_id = sample_meeting_with_speeches._speech_ids[0]  # type: ignore[attr-defined]
     resp = authorized_client.patch(
         f"/api/v1/speeches/{speech_id}",
         json={"sentiment": "invalid"}
@@ -84,7 +84,7 @@ def test_update_speech_not_found(authorized_client: TestClient) -> None:
 
 def test_update_speech_partial(authorized_client: TestClient, sample_meeting_with_speeches: Meeting) -> None:
     """Test updating speech with only some fields."""
-    speech_id = sample_meeting_with_speeches._speech_ids[0]
+    speech_id = sample_meeting_with_speeches._speech_ids[0]  # type: ignore[attr-defined]
 
     # Update only cleaned_text
     resp = authorized_client.patch(
