@@ -34,28 +34,32 @@ async def update_model_configs(
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> list[ModelConfigResponse]:
     user_id = current_user.get("sub", "")
-    existing_result = await db.execute(select(UserModelConfig).where(UserModelConfig.user_id == user_id))
-    for existing in existing_result.scalars().all():
-        await db.delete(existing)
 
-    created: list[UserModelConfig] = []
-    for payload in payloads:
-        encrypted_key, enc_version = encrypt_key(payload.api_key)
-        config = UserModelConfig(
-            user_id=user_id,
-            provider=payload.provider,
-            name=payload.name,
-            api_key_encrypted=encrypted_key,
-            encryption_version=enc_version,
-            base_url=payload.base_url,
-            default_model=payload.default_model,
-            is_default=payload.is_default,
-            is_enabled=payload.is_enabled,
-        )
-        db.add(config)
-        created.append(config)
+    # Use atomic transaction to ensure consistency
+    async with db.begin():
+        # Delete existing configs within transaction
+        existing_result = await db.execute(select(UserModelConfig).where(UserModelConfig.user_id == user_id))
+        for existing in existing_result.scalars().all():
+            await db.delete(existing)
 
-    await db.commit()
+        created: list[UserModelConfig] = []
+        for payload in payloads:
+            encrypted_key, enc_version = encrypt_key(payload.api_key)
+            config = UserModelConfig(
+                user_id=user_id,
+                provider=payload.provider,
+                name=payload.name,
+                api_key_encrypted=encrypted_key,
+                encryption_version=enc_version,
+                base_url=payload.base_url,
+                default_model=payload.default_model,
+                is_default=payload.is_default,
+                is_enabled=payload.is_enabled,
+            )
+            db.add(config)
+            created.append(config)
+
+    # Refresh after transaction commit
     for c in created:
         await db.refresh(c)
     return [ModelConfigResponse.model_validate(c) for c in created]

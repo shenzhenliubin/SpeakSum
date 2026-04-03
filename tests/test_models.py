@@ -179,3 +179,21 @@ async def test_graph_layout_model(db_session: AsyncSession, test_user: User) -> 
     fetched = result.scalar_one()
     assert fetched.layout_data["nodes"][0]["x"] == 100
     assert fetched.version == 1
+
+
+@pytest.mark.asyncio
+async def test_meeting_error_message(db_session: AsyncSession, test_user: User) -> None:
+    """Test Meeting error_message field."""
+    meeting = Meeting(
+        user_id=test_user.id,
+        title="Test Meeting",
+        source_file="test.txt",
+        status="failed",
+        error_message="Processing failed: LLM API timeout",
+    )
+    db_session.add(meeting)
+    await db_session.commit()
+    await db_session.refresh(meeting)
+
+    assert meeting.status == "failed"
+    assert meeting.error_message == "Processing failed: LLM API timeout"

@@ -32,6 +32,7 @@ class MeetingResponse(BaseModel):
     source_file: str
     file_size: int
     status: str
+    error_message: str | None = None
     created_at: datetime
     updated_at: datetime
     speeches: list["SpeechResponse"] | None = None
@@ -118,7 +119,7 @@ class ProcessingStatus(BaseModel):
     task_id: str
     status: str  # PENDING/PARSING/EXTRACTING/CLEANING/TAGGING/BUILDING_GRAPH/SUCCESS/FAILED
     stage: str | None = None
-    percent: int = 0
+    percent: int = Field(0, ge=0, le=100)
     message: str | None = None
     meeting_id: str | None = None
     error_message: str | None = None

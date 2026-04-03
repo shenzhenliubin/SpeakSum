@@ -75,6 +75,7 @@ class Meeting(Base):
     meeting_date: Mapped[date | None] = mapped_column(nullable=True)
     duration_minutes: Mapped[int | None] = mapped_column(nullable=True)
     participants: Mapped[list[str] | None] = mapped_column(JSON, default=list)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_file: Mapped[str] = mapped_column(String(255), nullable=False)
     file_size: Mapped[int] = mapped_column(default=0)
     status: Mapped[str] = mapped_column(String(50), default="pending")  # pending/processing/completed/failed

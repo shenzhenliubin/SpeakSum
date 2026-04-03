@@ -144,12 +144,14 @@ async def _process_meeting_async(
 
         except Exception as exc:
             logger.exception("process_meeting_task failed")
+            error_msg = str(exc)
             meeting_result = await db.execute(select(Meeting).where(Meeting.id == meeting_id))
             failed_meeting = meeting_result.scalar_one_or_none()
             if failed_meeting:
                 failed_meeting.status = "failed"
+                failed_meeting.error_message = error_msg[:1000]  # Limit to 1000 chars
                 await db.commit()
-            await _update_progress(self, meeting_id, "FAILED", "error", 0, error=str(exc))
+            await _update_progress(self, meeting_id, "FAILED", "error", 0, error=error_msg)
             raise self.retry(exc=exc) from exc
 
 

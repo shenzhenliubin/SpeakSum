@@ -77,12 +77,17 @@ async def health() -> dict[str, Any]:
     # Check Redis (Celery broker)
     try:
         from speaksum.tasks.celery_app import app as celery_app
-        # Try to get broker connection info without actually connecting
+        from redis.asyncio import from_url as redis_from_url
+
         broker_url = celery_app.conf.broker_url
         if broker_url:
-            services["redis"] = "configured"
+            # Actually ping Redis to verify connectivity
+            redis = redis_from_url(broker_url)
+            await redis.ping()
+            await redis.aclose()
+            services["redis"] = "connected"
     except Exception:
-        services["redis"] = "error"
+        services["redis"] = "disconnected"
 
     all_healthy = all(s == "connected" or s == "configured" for s in services.values())
 

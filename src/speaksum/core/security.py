@@ -1,6 +1,7 @@
 """Security utilities: JWT, password hashing, key encryption, current user dependency."""
 
 import base64
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -12,6 +13,8 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from speaksum.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 security_scheme = HTTPBearer(auto_error=False)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -113,6 +116,7 @@ def decrypt_key(encrypted: str | None, version: int = 1) -> str | None:
         aesgcm = AESGCM(key)
         decrypted = aesgcm.decrypt(nonce, ciphertext, None).decode()
         return decrypted
-    except Exception:
-        # Decryption failed, return as-is (may be legacy Fernet encrypted)
+    except Exception as e:
+        # Decryption failed, log error and return as-is (may be legacy encrypted)
+        logger.warning(f"Failed to decrypt key (version={version}): {type(e).__name__}: {e}")
         return encrypted
