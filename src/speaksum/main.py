@@ -8,9 +8,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from speaksum.api import (
+    auth_router,
     knowledge_graph_router,
     meetings_router,
     settings_router,
+    speaker_identities_router,
     speeches_router,
     upload_router,
 )
@@ -48,11 +50,13 @@ async def speaksum_exception_handler(request: object, exc: SpeakSumException) ->
 
 
 # Register routers
+app.include_router(auth_router)
 app.include_router(upload_router)
 app.include_router(meetings_router)
 app.include_router(speeches_router)
 app.include_router(knowledge_graph_router)
 app.include_router(settings_router)
+app.include_router(speaker_identities_router)
 
 
 @app.get("/health")

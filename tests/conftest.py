@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from speaksum.core.database import get_db
-from speaksum.core.security import create_access_token
+from speaksum.core.security import create_access_token, hash_password
 from speaksum.main import app
 from speaksum.models.models import Base, Meeting, Speech, User
 
@@ -47,7 +47,22 @@ def test_token() -> str:
 
 
 @pytest.fixture
+def client(async_engine) -> TestClient:
+    """Test client without authentication."""
+    async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+        async_session = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+    client = TestClient(app)
+    yield client
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
 def authorized_client(test_token, async_engine) -> TestClient:
+    """Test client with authentication."""
     async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
         async_session = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
         async with async_session() as session:
@@ -62,7 +77,9 @@ def authorized_client(test_token, async_engine) -> TestClient:
 
 @pytest.fixture
 async def test_user(db_session: AsyncSession) -> User:
-    user = User(id="test-user-123", email="test@example.com", password_hash="hashed")
+    # Use real password hash for auth tests (keep under 72 bytes for bcrypt)
+    password_hash = hash_password("pass123")
+    user = User(id="test-user-123", email="test@example.com", password_hash=password_hash)
     db_session.add(user)
     await db_session.commit()
     await db_session.refresh(user)
