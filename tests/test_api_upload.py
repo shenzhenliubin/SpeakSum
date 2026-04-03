@@ -11,13 +11,15 @@ def test_upload_txt(authorized_client: TestClient, mock_celery_task, tmp_path) -
 
     with open(txt, "rb") as f:
         resp = authorized_client.post(
-            "/api/v1/upload?speaker_identity=我",
+            "/api/v1/upload",
+            data={"speaker_identity": "我"},
             files={"file": ("meeting.txt", f, "text/plain")},
         )
     assert resp.status_code == 202
     data = resp.json()
     assert "task_id" in data
     assert "meeting_id" in data
+    assert data["status"] == "pending"
 
 
 def test_upload_missing_speaker(authorized_client: TestClient) -> None:
@@ -31,7 +33,8 @@ def test_upload_large_file(authorized_client: TestClient, tmp_path) -> None:
     big.write_bytes(b"x" * (11 * 1024 * 1024))
     with open(big, "rb") as f:
         resp = authorized_client.post(
-            "/api/v1/upload?speaker_identity=我",
+            "/api/v1/upload",
+            data={"speaker_identity": "我"},
             files={"file": ("big.txt", f, "text/plain")},
         )
     assert resp.status_code == 400
@@ -43,7 +46,8 @@ def test_upload_unsupported_format(authorized_client: TestClient, tmp_path) -> N
 
     with open(pdf, "rb") as f:
         resp = authorized_client.post(
-            "/api/v1/upload?speaker_identity=我",
+            "/api/v1/upload",
+            data={"speaker_identity": "我"},
             files={"file": ("meeting.pdf", f, "application/pdf")},
         )
     assert resp.status_code == 400

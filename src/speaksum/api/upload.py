@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from speaksum.core.config import settings
@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api/v1/upload", tags=["Upload"])
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 async def upload_file(
     file: UploadFile = File(...),
-    speaker_identity: str = "",
+    speaker_identity: str = Form(""),
     db: AsyncSession = Depends(get_db),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, str]:
@@ -62,7 +62,7 @@ async def upload_file(
         args=[str(meeting.id), str(file_path), speaker_identity],
     )
 
-    return {"task_id": task.id, "meeting_id": meeting.id}
+    return {"task_id": task.id, "meeting_id": str(meeting.id), "status": "pending"}
 
 
 @router.get("/{task_id}/status")

@@ -40,8 +40,13 @@ export const meetingApi = {
       formData.append('speaker_identity', data.speaker_identity);
     }
 
-    // Upload returns { task_id, meeting_id }
-    return apiClient.upload('/upload', data.file, onProgress);
+    // Upload returns { task_id, meeting_id, status }
+    return apiClient.upload(
+      '/upload',
+      data.file,
+      onProgress,
+      data.speaker_identity ? { speaker_identity: data.speaker_identity } : undefined
+    );
   },
 
   // Delete meeting

@@ -28,6 +28,7 @@ dependencies = [
     "passlib[bcrypt]>=1.7.4",
     "python-dateutil>=2.8.2",
     "cryptography>=42.0.0",
+    "aiosqlite>=0.22.1",
 ]
 
 [project.optional-dependencies]
@@ -65,3 +66,10 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --cov=src/speaksum --cov-report=term-missing"
 asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.1.0",
+    "respx>=0.22.0",
+]

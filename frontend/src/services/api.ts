@@ -85,10 +85,16 @@ class ApiClient {
   upload<T>(
     url: string,
     file: File,
-    onProgress?: (progress: number) => void
+    onProgress?: (progress: number) => void,
+    extraFields?: Record<string, string>
   ): Promise<T> {
     const formData = new FormData();
     formData.append('file', file);
+    if (extraFields) {
+      Object.entries(extraFields).forEach(([key, value]) => {
+        formData.append(key, value);
+      });
+    }
 
     return this.client.post(url, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },

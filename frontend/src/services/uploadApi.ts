@@ -28,7 +28,12 @@ export const uploadApi = {
       formData.append('speaker_identity', config.speaker_identity);
     }
 
-    return apiClient.upload('/upload', file, onProgress);
+    return apiClient.upload(
+      '/upload',
+      file,
+      onProgress,
+      config?.speaker_identity ? { speaker_identity: config.speaker_identity } : undefined
+    );
   },
 
   // Get task status (polling)
