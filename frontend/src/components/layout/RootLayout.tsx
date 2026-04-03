@@ -45,9 +45,7 @@ export const RootLayout: React.FC = () => {
         <Sidebar />
         <main className="flex-1 p-6 lg:p-8 overflow-auto">
           <ErrorBoundary>
-            <Suspense fallback={<PageLoader />}>
-              <Outlet />
-            </Suspense>
+            <Outlet />
           </ErrorBoundary>
         </main>
       </div>

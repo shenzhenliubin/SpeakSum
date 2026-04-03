@@ -55,5 +55,10 @@
     "typescript-eslint": "^8.57.0",
     "vite": "^8.0.1",
     "vitest": "^1.6.1"
+  },
+  "msw": {
+    "workerDirectory": [
+      "public"
+    ]
   }
 }
