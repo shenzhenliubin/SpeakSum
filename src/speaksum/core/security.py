@@ -5,8 +5,8 @@ from typing import Any
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError, jwt  # type: ignore[import-untyped]
-from passlib.context import CryptContext  # type: ignore[import-untyped]
+from jose import JWTError, jwt
+from passlib.context import CryptContext
 
 from speaksum.core.config import settings
 
