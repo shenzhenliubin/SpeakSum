@@ -71,10 +71,9 @@ class KnowledgeGraphBuilder:
                 matched_topic = next((t for t in topics if t.name == topic_name), None)
                 if not matched_topic:
                     continue
-                topic = matched_topic
-                topic_speech_count[topic.id] = topic_speech_count.get(topic.id, 0) + 1
-                tx, ty = topic_positions[topic.id]
-                offset = topic_speech_count[topic.id] * 30
+                topic_speech_count[matched_topic.id] = topic_speech_count.get(matched_topic.id, 0) + 1
+                tx, ty = topic_positions[matched_topic.id]
+                offset = topic_speech_count[matched_topic.id] * 30
                 sx = tx + 20
                 sy = ty + offset
                 speech_positions[speech.id] = (sx, sy)
@@ -90,7 +89,7 @@ class KnowledgeGraphBuilder:
                 )
                 edges.append(
                     KnowledgeGraphEdge(
-                        source=topic.id,
+                        source=matched_topic.id,
                         target=speech.id,
                         type="contains",
                     )

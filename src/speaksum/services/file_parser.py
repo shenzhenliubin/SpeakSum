@@ -117,7 +117,7 @@ def parse_doc(file_path: str) -> str:
 
 def parse_file(file_path: str) -> str:
     ext = Path(file_path).suffix.lower()
-    if ext == ".txt" or ext == ".md":
+    if ext in (".txt", ".md"):
         return parse_txt(file_path)
     if ext == ".docx":
         return parse_docx(file_path)

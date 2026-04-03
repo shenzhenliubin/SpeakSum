@@ -92,8 +92,13 @@ class TextProcessor:
         topics = await self.extract_topics(cleaned)
         sentiment = await self.analyze_sentiment(cleaned)
 
-        speech["cleaned_text"] = cleaned
-        speech["key_quotes"] = quotes
-        speech["topics"] = topics
-        speech["sentiment"] = sentiment
-        return speech
+        return {
+            "timestamp": speech.get("timestamp"),
+            "speaker": speech.get("speaker"),
+            "raw_text": raw,
+            "cleaned_text": cleaned,
+            "key_quotes": quotes,
+            "topics": topics,
+            "sentiment": sentiment,
+            "word_count": speech.get("word_count", 0),
+        }
