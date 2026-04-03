@@ -40,11 +40,13 @@ async def update_model_configs(
 
     created: list[UserModelConfig] = []
     for payload in payloads:
+        encrypted_key, enc_version = encrypt_key(payload.api_key)
         config = UserModelConfig(
             user_id=user_id,
             provider=payload.provider,
             name=payload.name,
-            api_key_encrypted=encrypt_key(payload.api_key),
+            api_key_encrypted=encrypted_key,
+            encryption_version=enc_version,
             base_url=payload.base_url,
             default_model=payload.default_model,
             is_default=payload.is_default,

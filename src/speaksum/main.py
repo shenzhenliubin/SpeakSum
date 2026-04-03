@@ -1,7 +1,7 @@
 """FastAPI application entry point."""
 
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -56,5 +56,38 @@ app.include_router(settings_router)
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
+async def health() -> dict[str, Any]:
+    """Health check endpoint with service status."""
+    from datetime import datetime, timezone
+
+    services = {
+        "database": "unknown",
+        "redis": "unknown",
+    }
+
+    # Check database
+    try:
+        from sqlalchemy import text
+        async with async_engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        services["database"] = "connected"
+    except Exception:
+        services["database"] = "disconnected"
+
+    # Check Redis (Celery broker)
+    try:
+        from speaksum.tasks.celery_app import app as celery_app
+        # Try to get broker connection info without actually connecting
+        broker_url = celery_app.conf.broker_url
+        if broker_url:
+            services["redis"] = "configured"
+    except Exception:
+        services["redis"] = "error"
+
+    all_healthy = all(s == "connected" or s == "configured" for s in services.values())
+
+    return {
+        "status": "healthy" if all_healthy else "degraded",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "services": services,
+    }

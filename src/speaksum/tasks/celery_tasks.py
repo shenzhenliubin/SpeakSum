@@ -49,17 +49,23 @@ async def _process_meeting_async(
     file_path: str,
     speaker_identity: str,
 ) -> dict[str, Any]:
+    """Process meeting with detailed state machine.
+
+    State machine: PENDING → PARSING → EXTRACTING → CLEANING → TAGGING → BUILDING_GRAPH → SUCCESS
+    """
     async with self.async_session() as db:
         try:
-            await _update_progress(self, meeting_id, "PROCESSING", "parsing", 10)
-
+            # Stage 1: PARSING (0% → 10%)
+            await _update_progress(self, meeting_id, "PARSING", "parsing", 10)
             text = parse_file(file_path)
-            await _update_progress(self, meeting_id, "PROCESSING", "extracting", 25)
 
+            # Stage 2: EXTRACTING (10% → 40%)
+            await _update_progress(self, meeting_id, "EXTRACTING", "extracting", 25)
             from speaksum.services.file_parser import extract_speeches
             raw_speeches = extract_speeches(text, speaker_identity)
-            await _update_progress(self, meeting_id, "PROCESSING", "extracting", 40)
+            await _update_progress(self, meeting_id, "EXTRACTING", "extracting", 40)
 
+            # Stage 3: CLEANING (40% → 70%)
             # For MVP, use Kimi default
             llm = get_llm_client("kimi")
             processor = TextProcessor(llm)
@@ -70,8 +76,10 @@ async def _process_meeting_async(
                 processed = await processor.process_speech(raw)
                 speech = Speech(
                     meeting_id=meeting_id,
+                    sequence_number=idx + 1,
                     timestamp=processed["timestamp"],
                     speaker=processed["speaker"],
+                    is_target_speaker=(processed["speaker"] == speaker_identity),
                     raw_text=processed["raw_text"],
                     cleaned_text=processed.get("cleaned_text"),
                     key_quotes=processed.get("key_quotes"),
@@ -81,12 +89,13 @@ async def _process_meeting_async(
                 )
                 cleaned_speeches.append(speech)
                 percent = 40 + int((idx + 1) / total * 30)
-                await _update_progress(self, meeting_id, "PROCESSING", "cleaning", percent)
+                await _update_progress(self, meeting_id, "CLEANING", "cleaning", percent)
 
             db.add_all(cleaned_speeches)
             await db.commit()
 
-            await _update_progress(self, meeting_id, "PROCESSING", "tagging", 75)
+            # Stage 4: TAGGING (70% → 75%)
+            await _update_progress(self, meeting_id, "TAGGING", "tagging", 75)
 
             # Update topics
             meeting_result = await db.execute(select(Meeting).where(Meeting.id == meeting_id))
@@ -120,14 +129,13 @@ async def _process_meeting_async(
                     )
             await db.commit()
 
-            await _update_progress(self, meeting_id, "PROCESSING", "building graph", 90)
-
-            # Build graph layout
+            # Stage 5: BUILDING_GRAPH (75% → 90%)
+            await _update_progress(self, meeting_id, "BUILDING_GRAPH", "building graph", 90)
             builder = KnowledgeGraphBuilder(db)
             graph = await builder.build_graph(meeting.user_id)
             await builder.save_layout(meeting.user_id, graph)
 
-            # Update meeting status
+            # Stage 6: SUCCESS (100%)
             meeting.status = "completed"
             await db.commit()
 

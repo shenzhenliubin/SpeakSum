@@ -1,10 +1,11 @@
 """Security utilities: JWT, password hashing, key encryption, current user dependency."""
 
 import base64
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
@@ -46,33 +47,72 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials | None = De
     return verify_token(credentials.credentials)
 
 
-def _get_fernet() -> Fernet | None:
+def _get_encryption_key(version: int = 1) -> bytes | None:
+    """Get encryption key for the specified version.
+
+    Currently supports only version 1 (current key from settings).
+    Future versions can implement key rotation by storing multiple keys.
+    """
     key = settings.ENCRYPTION_KEY
     if not key:
         return None
-    raw = key.encode()[:32].ljust(32, b"0")[:32]
-    fernet_key = base64.urlsafe_b64encode(raw)
-    return Fernet(fernet_key)
+    # Decode base64 key or use raw key padded to 32 bytes
+    try:
+        raw = base64.b64decode(key)
+        if len(raw) >= 32:
+            return raw[:32]
+    except Exception:
+        raw = key.encode()
+    return raw[:32].ljust(32, b"0")[:32]
 
 
-def encrypt_key(plain: str | None) -> str | None:
+def encrypt_key(plain: str | None) -> tuple[str | None, int]:
+    """Encrypt API key using AES-256-GCM.
+
+    Returns:
+        Tuple of (encrypted_base64, encryption_version)
+    """
     if not plain:
-        return None
-    f = _get_fernet()
-    if f is None:
-        return plain
-    encrypted: str = f.encrypt(plain.encode()).decode()
-    return encrypted
+        return None, 1
+
+    key = _get_encryption_key(version=1)
+    if key is None:
+        # No encryption key configured, return plaintext with version 0
+        return plain, 0
+
+    aesgcm = AESGCM(key)
+    nonce = os.urandom(12)  # 96-bit nonce for GCM
+    ciphertext = aesgcm.encrypt(nonce, plain.encode(), None)
+    # Combine nonce + ciphertext and encode as base64
+    encrypted = base64.b64encode(nonce + ciphertext).decode()
+    return encrypted, 1
 
 
-def decrypt_key(encrypted: str | None) -> str | None:
+def decrypt_key(encrypted: str | None, version: int = 1) -> str | None:
+    """Decrypt API key using AES-256-GCM.
+
+    Args:
+        encrypted: Base64 encoded encrypted key (nonce + ciphertext)
+        version: Encryption version used for this key
+    """
     if not encrypted:
         return None
-    f = _get_fernet()
-    if f is None:
+
+    # Version 0 means plaintext (no encryption)
+    if version == 0:
         return encrypted
+
+    key = _get_encryption_key(version=version)
+    if key is None:
+        # No encryption key configured, assume plaintext
+        return encrypted
+
     try:
-        decrypted: str = f.decrypt(encrypted.encode()).decode()
+        data = base64.b64decode(encrypted)
+        nonce, ciphertext = data[:12], data[12:]
+        aesgcm = AESGCM(key)
+        decrypted = aesgcm.decrypt(nonce, ciphertext, None).decode()
         return decrypted
     except Exception:
+        # Decryption failed, return as-is (may be legacy Fernet encrypted)
         return encrypted

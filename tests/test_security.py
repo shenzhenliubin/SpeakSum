@@ -38,18 +38,18 @@ def test_verify_invalid_token() -> None:
 def test_encrypt_decrypt_key() -> None:
     # Test with encryption key set
     original = "my-secret-api-key"
-    encrypted = encrypt_key(original)
-    decrypted = decrypt_key(encrypted)
+    encrypted, version = encrypt_key(original)
+    decrypted = decrypt_key(encrypted, version)
     assert decrypted == original
 
 
 def test_encrypt_decrypt_none() -> None:
-    assert encrypt_key(None) is None
+    assert encrypt_key(None) == (None, 1)
     assert decrypt_key(None) is None
 
 
 def test_encrypt_decrypt_empty() -> None:
-    assert encrypt_key("") is None
+    assert encrypt_key("") == (None, 1)
     assert decrypt_key("") is None
 
 
@@ -109,7 +109,7 @@ def test_decrypt_key_invalid_ciphertext() -> None:
     # When encryption key is set but ciphertext is invalid
     # it should return the ciphertext as-is
     invalid_ciphertext = "not-valid-encrypted-data"
-    result = decrypt_key(invalid_ciphertext)
+    result = decrypt_key(invalid_ciphertext, version=1)
     # Should return the input as-is since it can't be decrypted
     assert result == invalid_ciphertext
 
@@ -130,9 +130,10 @@ def test_encrypt_decrypt_roundtrip() -> None:
     ]
 
     for key in test_keys:
-        encrypted = encrypt_key(key)
+        encrypted, version = encrypt_key(key)
         assert encrypted is not None
         assert encrypted != key  # Should be encrypted
+        assert version == 1  # Should be version 1
 
-        decrypted = decrypt_key(encrypted)
+        decrypted = decrypt_key(encrypted, version)
         assert decrypted == key  # Should match original

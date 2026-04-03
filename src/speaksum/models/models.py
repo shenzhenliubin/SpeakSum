@@ -63,6 +63,7 @@ class User(Base):
     topics: Mapped[list["Topic"]] = relationship("Topic", back_populates="user", cascade="all, delete-orphan")
     graph_layouts: Mapped[list["GraphLayout"]] = relationship("GraphLayout", back_populates="user", cascade="all, delete-orphan")
     model_configs: Mapped[list["UserModelConfig"]] = relationship("UserModelConfig", back_populates="user", cascade="all, delete-orphan")
+    speaker_identities: Mapped[list["SpeakerIdentity"]] = relationship("SpeakerIdentity", back_populates="user", cascade="all, delete-orphan")
 
 
 class Meeting(Base):
@@ -72,6 +73,8 @@ class Meeting(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     meeting_date: Mapped[date | None] = mapped_column(nullable=True)
+    duration_minutes: Mapped[int | None] = mapped_column(nullable=True)
+    participants: Mapped[list[str] | None] = mapped_column(JSON, default=list)
     source_file: Mapped[str] = mapped_column(String(255), nullable=False)
     file_size: Mapped[int] = mapped_column(default=0)
     status: Mapped[str] = mapped_column(String(50), default="pending")  # pending/processing/completed/failed
@@ -87,8 +90,10 @@ class Speech(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     meeting_id: Mapped[str] = mapped_column(ForeignKey("meetings.id"), nullable=False)
+    sequence_number: Mapped[int] = mapped_column(default=0)
     timestamp: Mapped[str | None] = mapped_column(String(20), nullable=True)
     speaker: Mapped[str] = mapped_column(String(100), nullable=False)
+    is_target_speaker: Mapped[bool] = mapped_column(default=False)
     raw_text: Mapped[str] = mapped_column(Text, nullable=False)
     cleaned_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     key_quotes: Mapped[list[str] | None] = mapped_column(JSON, default=list)
@@ -151,6 +156,7 @@ class UserModelConfig(Base):
     provider: Mapped[str] = mapped_column(String(50), nullable=False)  # kimi/openai/claude/ollama/custom
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    encryption_version: Mapped[int] = mapped_column(default=1)
     base_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     default_model: Mapped[str] = mapped_column(String(100), nullable=False)
     is_default: Mapped[bool] = mapped_column(default=False)
@@ -159,3 +165,18 @@ class UserModelConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(default=now_utc, onupdate=now_utc)
 
     user: Mapped["User"] = relationship("User", back_populates="model_configs")
+
+
+class SpeakerIdentity(Base):
+    __tablename__ = "speaker_identities"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    aliases: Mapped[list[str] | None] = mapped_column(JSON, default=list)
+    color: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(default=now_utc, onupdate=now_utc)
+
+    user: Mapped["User"] = relationship("User", back_populates="speaker_identities")

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from speaksum.core.database import get_db
 from speaksum.core.security import get_current_user
 from speaksum.models.models import Meeting, Speech, Topic
-from speaksum.schemas.schemas import KnowledgeGraphData, SpeechResponse
+from speaksum.schemas.schemas import GraphLayoutSaveRequest, KnowledgeGraphData, SpeechResponse
 from speaksum.services.knowledge_graph_builder import KnowledgeGraphBuilder
 
 router = APIRouter(prefix="/api/v1/knowledge-graph", tags=["Knowledge Graph"])
@@ -49,3 +49,22 @@ async def get_topic_speeches(
     )
     speeches = result.scalars().all()
     return [SpeechResponse.model_validate(s) for s in speeches]
+
+
+@router.post("/layout")
+async def save_graph_layout(
+    payload: GraphLayoutSaveRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, str]:
+    """Save user-adjusted graph layout."""
+    user_id = current_user.get("sub", "")
+
+    # Convert payload to KnowledgeGraphData for the builder
+    graph_data = KnowledgeGraphData(nodes=payload.nodes, edges=payload.edges)
+
+    # Save layout using the builder
+    builder = KnowledgeGraphBuilder(db)
+    await builder.save_layout(user_id, graph_data)
+
+    return {"status": "saved"}
