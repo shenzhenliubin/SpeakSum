@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import type { Meeting, MeetingFilters, ViewMode } from '@/types';
+import type { Meeting, ViewMode } from '@/types';
 
 interface MeetingState {
   // State
@@ -8,7 +8,12 @@ interface MeetingState {
   currentMeeting: Meeting | null;
   selectedSpeaker: string;
   viewMode: ViewMode;
-  filters: MeetingFilters;
+  filters: {
+    q?: string;           // Changed from 'searchQuery' to match backend
+    status?: 'processing' | 'completed' | 'error';
+    sort_by?: 'created_at' | 'meeting_date' | 'title';
+    sort_order?: 'asc' | 'desc';
+  };
   isLoading: boolean;
 
   // Actions
@@ -16,7 +21,7 @@ interface MeetingState {
   setCurrentMeeting: (meeting: Meeting | null) => void;
   setSelectedSpeaker: (speaker: string) => void;
   setViewMode: (mode: ViewMode) => void;
-  setFilters: (filters: Partial<MeetingFilters>) => void;
+  setFilters: (filters: Partial<MeetingState['filters']>) => void;
   addMeeting: (meeting: Meeting) => void;
   updateMeeting: (id: string, updates: Partial<Meeting>) => void;
   removeMeeting: (id: string) => void;
@@ -30,10 +35,10 @@ export const useMeetingStore = create<MeetingState>()(
     selectedSpeaker: '我',
     viewMode: 'timeline',
     filters: {
-      searchQuery: '',
-      dateRange: null,
-      topics: [],
+      q: '',
       status: undefined,
+      sort_by: 'created_at',
+      sort_order: 'desc',
     },
     isLoading: false,
 

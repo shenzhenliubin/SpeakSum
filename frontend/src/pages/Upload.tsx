@@ -71,9 +71,7 @@ export const Upload: React.FC = () => {
       for (const file of files) {
         const result = await createMeeting.mutateAsync({
           file,
-          title: values.title || file.name,
-          date: values.date || new Date().toISOString(),
-          speakerIdentity: values.speakerIdentity,
+          speaker_identity: values.speakerIdentity,
         });
 
         // Navigate to progress page for the last file

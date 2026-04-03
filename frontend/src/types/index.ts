@@ -7,156 +7,144 @@ export interface User {
   createdAt: string;
 }
 
-// Meeting types
-export type MeetingStatus = 'pending' | 'processing' | 'completed' | 'error';
+// Meeting types - aligned with backend OpenAPI
+export type MeetingStatus = 'processing' | 'completed' | 'error';
 
 export interface Meeting {
   id: string;
   title: string;
-  date: string;
+  meeting_date: string;  // Changed from 'date' to match backend
   duration?: string;
   participants: string[];
-  sourceFile: string;
-  fileSize: number;
+  source_file: string;   // Changed from 'sourceFile' to match backend
+  file_size: number;     // Changed from 'fileSize' to match backend
   status: MeetingStatus;
-  speechCount: number;
-  mySpeechCount: number;
-  createdAt: string;
+  speech_count: number;  // Changed from 'speechCount' to match backend
+  topic_count: number;   // Added to match backend
+  created_at: string;    // Changed from 'createdAt' to match backend
 }
 
-// Speech types
+// Speech types - aligned with backend OpenAPI
 export type Sentiment = 'positive' | 'negative' | 'neutral' | 'mixed';
 
 export interface Speech {
   id: string;
-  meetingId: string;
+  meeting_id: string;      // Changed from 'meetingId' to match backend
   timestamp: string;
   speaker: string;
-  rawText: string;
-  cleanedText: string;
-  keyQuotes: string[];
+  raw_text: string;        // Changed from 'rawText' to match backend
+  cleaned_text: string;    // Changed from 'cleanedText' to match backend
+  key_quotes: string[];    // Changed from 'keyQuotes' to match backend
   topics: string[];
   sentiment: Sentiment;
-  wordCount: number;
+  word_count: number;      // Changed from 'wordCount' to match backend
+  created_at: string;      // Added to match backend
 }
 
-// Topic types
+// Topic types - aligned with backend OpenAPI (TopicNode)
 export interface Topic {
   id: string;
   name: string;
-  description?: string;
-  relevance?: number;
-  meetingIds?: string[];
-  speechCount: number;
-  meetingCount: number;
-  firstAppearance: string;
-  lastAppearance: string;
-  relatedTopics: string[];
-}
-
-// Graph types
-export interface GraphNode {
-  id: string;
-  type: 'topic' | 'speech';
-  label: string;
-  x: number;
-  y: number;
+  count: number;              // Changed from 'speechCount' to match backend
+  meeting_count: number;      // Changed from 'meetingCount' to match backend
+  first_appearance: string;   // Changed from 'firstAppearance' to match backend
+  last_appearance: string;    // Changed from 'lastAppearance' to match backend
+  x?: number;                 // Added: graph layout X coordinate
+  y?: number;                 // Added: graph layout Y coordinate
+  // D3 simulation properties (frontend only)
   fx?: number | null;
   fy?: number | null;
-  size: number;
-  data: Topic | Speech;
+  // Frontend-only fields for graph visualization (not in backend schema)
+  description?: string;
+  relevance?: number;
+  meeting_ids?: string[];
 }
 
+// Graph types - aligned with backend OpenAPI
 export interface GraphEdge {
-  id: string;
-  source: string;
-  target: string;
-  strength: number;
-  type: 'association' | 'temporal';
+  source: string;        // Source topic ID
+  target: string;        // Target topic ID
+  strength: number;      // Connection strength 0-1
+  co_occurrence: number; // Co-occurrence count
 }
 
 export interface GraphLayout {
-  nodes: GraphNode[];
+  nodes: Topic[];        // Backend returns TopicNode array
   edges: GraphEdge[];
-  version: number;
-  updatedAt: string;
+  layout_version: string; // Changed from 'version' to match backend
 }
 
-// Processing task types
-export type TaskStatus = 'pending' | 'processing' | 'completed' | 'error';
+// Processing task types - aligned with backend OpenAPI (TaskStatus)
+export type TaskStatus = 'pending' | 'processing' | 'completed' | 'failed';  // Changed 'error' to 'failed' to match backend
+
 export type TaskStage = 'parsing' | 'extracting' | 'cleaning' | 'tagging' | 'building_graph';
 
 export interface ProcessingTask {
-  id: string;
-  meetingId: string;
+  task_id: string;        // Changed from 'id' to match backend
+  meeting_id: string;     // Changed from 'meetingId' to match backend
   status: TaskStatus;
-  stage: TaskStage;
-  percent: number;
-  currentChunk?: number;
-  totalChunks?: number;
-  errorMessage?: string;
-  createdAt: string;
-  updatedAt: string;
+  progress: number;       // Changed from 'percent' to match backend
+  current_step?: string;  // Changed from 'stage' to match backend
+  error_message?: string | null;  // Changed from 'errorMessage' to match backend
+  created_at: string;     // Changed from 'createdAt' to match backend
+  updated_at: string;     // Changed from 'updatedAt' to match backend
 }
 
 export interface ProgressEvent {
+  task_id: string;        // Added to match backend
+  meeting_id: string;     // Added to match backend
   status: TaskStatus;
-  stage: TaskStage;
-  percent: number;
-  message?: string;
+  progress: number;       // Changed from 'percent' to match backend
+  current_step?: string;  // Changed from 'stage' to match backend
+  error_message?: string;
 }
 
-// Model config types
-export type ModelProvider = 'kimi' | 'openai' | 'claude' | 'ollama' | 'custom';
+// Model config types - aligned with backend OpenAPI
+export type ModelProvider = 'kimi' | 'openai' | 'claude' | 'ollama';
 
 export interface ModelConfig {
   id: string;
   provider: ModelProvider;
   name: string;
-  apiKey?: string;
-  baseUrl: string;
-  defaultModel: string;
-  isDefault: boolean;
-  isEnabled: boolean;
+  base_url: string | null;      // Changed from 'baseUrl' to match backend
+  default_model: string;        // Changed from 'defaultModel' to match backend
+  is_default: boolean;          // Changed from 'isDefault' to match backend
+  is_enabled: boolean;          // Changed from 'isEnabled' to match backend
+  created_at: string;           // Added to match backend
 }
 
-// Speaker identity types
+// Speaker identity types - aligned with backend (Note: identities endpoints not in OpenAPI yet)
 export interface SpeakerIdentity {
   id: string;
   name: string;
-  isDefault: boolean;
-  usageCount: number;
-  createdAt: string;
+  is_default: boolean;          // Changed from 'isDefault' to match backend convention
+  usage_count: number;          // Changed from 'usageCount' to match backend convention
+  created_at: string;           // Changed from 'createdAt' to match backend
 }
 
-// API types
+// API types - aligned with backend
 export interface ApiResponse<T> {
-  success: boolean;
+  success?: boolean;  // Made optional as some endpoints don't return this
   data?: T;
   error?: string;
   message?: string;
 }
 
+// Paginated response aligned with backend OpenAPI
 export interface PaginatedResponse<T> {
   items: T[];
   total: number;
   page: number;
-  pageSize: number;
-  totalPages: number;
+  page_size: number;      // Changed from 'pageSize' to match backend
+  total_pages: number;    // Changed from 'totalPages' to match backend
 }
 
-// Filter types
+// Filter types - aligned with backend query parameters
 export interface MeetingFilters {
-  searchQuery?: string;
-  dateRange?: [Date, Date] | null;
-  topics?: string[];
+  q?: string;             // Changed from 'searchQuery' to match backend
   status?: MeetingStatus;
-}
-
-export interface GraphFilters {
-  timeRange?: [Date, Date] | null;
-  topics?: string[];
-  minAssociationStrength?: number;
+  sort_by?: 'created_at' | 'meeting_date' | 'title';  // Added to match backend
+  sort_order?: 'asc' | 'desc';  // Added to match backend
 }
 
 // UI types

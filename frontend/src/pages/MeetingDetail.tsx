@@ -19,11 +19,11 @@ const SpeechItem: React.FC<{ speech: Speech; isFirst: boolean }> = ({ speech, is
           <span className="text-sm text-text-tertiary font-mono">{speech.timestamp}</span>
           <Tag color={getSentimentColor(speech.sentiment)}>{formatSentiment(speech.sentiment)}</Tag>
         </div>
-        <p className="text-text-primary mb-3 leading-relaxed">{speech.cleanedText}</p>
-        {speech.keyQuotes.length > 0 && (
+        <p className="text-text-primary mb-3 leading-relaxed">{speech.cleaned_text}</p>
+        {speech.key_quotes.length > 0 && (
           <div className="mb-3">
             <p className="text-sm text-text-tertiary mb-2">💡 金句</p>
-            {speech.keyQuotes.map((quote, idx) => (
+            {speech.key_quotes.map((quote: string, idx: number) => (
               <div key={idx} className="bg-moss/5 border-l-4 border-moss p-3 rounded-r-lg mb-2">
                 <p className="text-text-secondary italic">"{quote}"</p>
               </div>
@@ -82,9 +82,9 @@ export const MeetingDetail: React.FC = () => {
       ),
       children: isSpeechesLoading ? (
         <LoadingState type="skeleton" rows={5} />
-      ) : speeches && speeches.length > 0 ? (
+      ) : speeches && speeches.items.length > 0 ? (
         <div className="relative">
-          {speeches.map((speech, index) => (
+          {speeches.items.map((speech: Speech, index: number) => (
             <SpeechItem key={speech.id} speech={speech} isFirst={index === 0} />
           ))}
         </div>
@@ -109,11 +109,11 @@ export const MeetingDetail: React.FC = () => {
             </div>
             <div>
               <h4 className="text-text-tertiary mb-1">会议日期</h4>
-              <p className="text-text-primary">{formatDate(meeting.date)}</p>
+              <p className="text-text-primary">{formatDate(meeting.meeting_date)}</p>
             </div>
             <div>
               <h4 className="text-text-tertiary mb-1">源文件</h4>
-              <p className="text-text-primary">{meeting.sourceFile}</p>
+              <p className="text-text-primary">{meeting.source_file}</p>
             </div>
             <div>
               <h4 className="text-text-tertiary mb-1">参与者</h4>
@@ -161,9 +161,9 @@ export const MeetingDetail: React.FC = () => {
       ),
       children: (
         <Card>
-          {speeches && speeches.length > 0 ? (
+          {speeches && speeches.items.length > 0 ? (
             <div className="flex flex-wrap gap-2">
-              {Array.from(new Set(speeches.flatMap((s) => s.topics))).map((topic) => (
+              {Array.from(new Set(speeches.items.flatMap((s: Speech) => s.topics))).map((topic: string) => (
                 <Tag key={topic} color="default" className="text-base px-4 py-1">
                   #{topic}
                 </Tag>
@@ -187,8 +187,7 @@ export const MeetingDetail: React.FC = () => {
         <div className="flex-1">
           <h1 className="text-2xl font-display text-text-primary">{meeting.title}</h1>
           <p className="text-text-secondary">
-            {formatDate(meeting.date)} · {formatNumber(meeting.speechCount)} 条发言 ·{' '}
-            {formatNumber(meeting.mySpeechCount)} 条我的发言
+            {formatDate(meeting.meeting_date)} · {formatNumber(meeting.speech_count)} 条发言
           </p>
         </div>
       </div>

@@ -54,7 +54,7 @@ export const ProcessingProgress: React.FC = () => {
 
   const getCurrentStep = () => {
     if (!progress) return 0;
-    const stageIndex = stages.indexOf(progress.stage);
+    const stageIndex = stages.indexOf(progress.current_step as TaskStage);
     return stageIndex >= 0 ? stageIndex : 0;
   };
 
@@ -124,11 +124,11 @@ export const ProcessingProgress: React.FC = () => {
           <div className="flex items-center justify-between mb-2">
             <span className="text-text-primary font-medium">总体进度</span>
             <span className="text-text-secondary">
-              {progress?.percent || 0}% · 已用时 {formatElapsedTime(elapsedTime)}
+              {progress?.progress || 0}% · 已用时 {formatElapsedTime(elapsedTime)}
             </span>
           </div>
           <Progress
-            percent={progress?.percent || 0}
+            percent={progress?.progress || 0}
             status={isError ? 'exception' : 'active'}
             strokeColor="#c8734f"
           />
@@ -147,8 +147,8 @@ export const ProcessingProgress: React.FC = () => {
         {/* Status Alert */}
         <Alert
           message={
-            progress?.stage
-              ? `正在${formatTaskStage(progress.stage)}...`
+            progress?.current_step
+              ? `正在${formatTaskStage(progress.current_step as TaskStage)}...`
               : '等待开始处理...'
           }
           description="请保持页面打开，处理完成后会自动跳转"

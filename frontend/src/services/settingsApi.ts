@@ -1,60 +1,50 @@
 import { apiClient } from './api';
-import type { ModelConfig, SpeakerIdentity } from '@/types';
+import type { ModelConfig, ModelProvider } from '@/types';
 
-interface CreateModelConfigRequest {
-  provider: string;
+// Model config aligned with backend OpenAPI
+interface ModelConfigRequest {
+  provider: ModelProvider;
   name: string;
-  apiKey?: string;
-  baseUrl: string;
-  defaultModel: string;
+  api_key?: string;
+  base_url?: string;
+  default_model: string;
+  is_default?: boolean;
+  is_enabled?: boolean;
 }
 
-interface UpdateModelConfigRequest {
-  name?: string;
-  apiKey?: string;
-  baseUrl?: string;
-  defaultModel?: string;
-  isDefault?: boolean;
-  isEnabled?: boolean;
+// Settings update request aligned with backend
+interface SettingsUpdateRequest {
+  action: 'create' | 'update' | 'delete';
+  config_id?: string;
+  config?: ModelConfigRequest;
 }
 
-interface CreateIdentityRequest {
-  name: string;
+// Settings response aligned with backend
+interface SettingsResponse {
+  configs: ModelConfig[];
+  default_config_id: string | null;
 }
 
 export const settingsApi = {
-  // Model configuration
-  getModelConfigs: (): Promise<ModelConfig[]> =>
+  // Get model configurations
+  // GET /api/v1/settings/model
+  // Returns: { configs: ModelConfig[], default_config_id: string | null }
+  getModelConfigs: (): Promise<SettingsResponse> =>
     apiClient.get('/settings/model'),
 
-  getModelConfig: (id: string): Promise<ModelConfig> =>
-    apiClient.get(`/settings/model/${id}`),
+  // Update model configuration (create/update/delete)
+  // PUT /api/v1/settings/model
+  updateModelConfig: (data: SettingsUpdateRequest): Promise<{ success: boolean }> =>
+    apiClient.put('/settings/model', data),
 
-  createModelConfig: (data: CreateModelConfigRequest): Promise<ModelConfig> =>
-    apiClient.post('/settings/model', data),
+  // Note: Speaker identity endpoints are not defined in OpenAPI yet
+  // These are placeholders for future implementation
+  getIdentities: (): Promise<{ id: string; name: string }[]> =>
+    Promise.resolve([]),
 
-  updateModelConfig: (id: string, data: UpdateModelConfigRequest): Promise<ModelConfig> =>
-    apiClient.patch(`/settings/model/${id}`, data),
+  createIdentity: (_data: { name: string }): Promise<{ id: string; name: string }> =>
+    Promise.resolve({ id: '', name: '' }),
 
-  deleteModelConfig: (id: string): Promise<void> =>
-    apiClient.delete(`/settings/model/${id}`),
-
-  setDefaultModel: (id: string): Promise<void> =>
-    apiClient.patch(`/settings/model/${id}/default`, {}),
-
-  // Speaker identities
-  getIdentities: (): Promise<SpeakerIdentity[]> =>
-    apiClient.get('/identities'),
-
-  createIdentity: (data: CreateIdentityRequest): Promise<SpeakerIdentity> =>
-    apiClient.post('/identities', data),
-
-  updateIdentity: (id: string, data: Partial<CreateIdentityRequest>): Promise<SpeakerIdentity> =>
-    apiClient.patch(`/identities/${id}`, data),
-
-  deleteIdentity: (id: string): Promise<void> =>
-    apiClient.delete(`/identities/${id}`),
-
-  setDefaultIdentity: (id: string): Promise<void> =>
-    apiClient.patch(`/identities/${id}/default`, {}),
+  deleteIdentity: (_id: string): Promise<void> =>
+    Promise.resolve(),
 };

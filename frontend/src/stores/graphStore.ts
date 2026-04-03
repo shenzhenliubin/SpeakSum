@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import type { GraphLayout, GraphNode, Topic, Speech, GraphFilters } from '@/types';
+import type { GraphLayout, Topic, Speech } from '@/types';
 
 interface GraphState {
   // State
@@ -9,7 +9,6 @@ interface GraphState {
   selectedSpeech: Speech | null;
   zoom: number;
   pan: { x: number; y: number };
-  filter: GraphFilters;
   isLoading: boolean;
 
   // Actions
@@ -19,23 +18,18 @@ interface GraphState {
   selectSpeech: (speech: Speech | null) => void;
   setZoom: (zoom: number) => void;
   setPan: (pan: { x: number; y: number }) => void;
-  setFilter: (filter: Partial<GraphFilters>) => void;
   resetView: () => void;
   setIsLoading: (isLoading: boolean) => void;
 }
 
 export const useGraphStore = create<GraphState>()(
   immer((set) => ({
-    layout: { nodes: [], edges: [], version: 1, updatedAt: new Date().toISOString() },
+    // Backend returns: { nodes: TopicNode[], edges: TopicEdge[], layout_version: string }
+    layout: { nodes: [], edges: [], layout_version: '1' },
     selectedTopic: null,
     selectedSpeech: null,
     zoom: 1,
     pan: { x: 0, y: 0 },
-    filter: {
-      timeRange: null,
-      topics: [],
-      minAssociationStrength: 0.2,
-    },
     isLoading: false,
 
     setLayout: (layout) =>
@@ -45,7 +39,7 @@ export const useGraphStore = create<GraphState>()(
 
     updateNodePosition: (nodeId, position) =>
       set((state) => {
-        const node = state.layout.nodes.find((n: GraphNode) => n.id === nodeId);
+        const node = state.layout.nodes.find((n: Topic) => n.id === nodeId);
         if (node) {
           node.x = position.x;
           node.y = position.y;
@@ -73,11 +67,6 @@ export const useGraphStore = create<GraphState>()(
     setPan: (pan) =>
       set((state) => {
         state.pan = pan;
-      }),
-
-    setFilter: (filter) =>
-      set((state) => {
-        state.filter = { ...state.filter, ...filter };
       }),
 
     resetView: () =>

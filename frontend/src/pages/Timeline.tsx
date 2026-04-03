@@ -14,7 +14,6 @@ import dayjs from 'dayjs';
 const { RangePicker } = DatePicker;
 
 const statusColors: Record<MeetingStatus, string> = {
-  pending: 'default',
   processing: 'processing',
   completed: 'success',
   error: 'error',
@@ -30,12 +29,10 @@ const MeetingCard: React.FC<{ meeting: Meeting; onClick: () => void }> = ({ meet
         </div>
         <p className="text-text-secondary text-sm mb-2">
           <CalendarOutlined className="mr-1" />
-          {formatDate(meeting.date)} · {formatRelativeTime(meeting.date)}
+          {formatDate(meeting.meeting_date)} · {formatRelativeTime(meeting.meeting_date)}
         </p>
         <div className="flex items-center gap-4 text-sm text-text-tertiary">
-          <span>{formatNumber(meeting.speechCount)} 条发言</span>
-          <span>·</span>
-          <span>{formatNumber(meeting.mySpeechCount)} 条我的发言</span>
+          <span>{formatNumber(meeting.speech_count)} 条发言</span>
           <span>·</span>
           <span>{meeting.participants.length} 位参与者</span>
         </div>
@@ -58,17 +55,14 @@ export const Timeline: React.FC = () => {
   const debouncedSearch = useDebouncedValue(searchQuery, 300);
 
   const filters: MeetingFilters = {
-    searchQuery: debouncedSearch,
-    dateRange: dateRange
-      ? [dateRange[0]?.toDate() ?? new Date(), dateRange[1]?.toDate() ?? new Date()]
-      : null,
+    q: debouncedSearch,
     status: statusFilter,
   };
 
   const { data, isLoading } = useMeetings({
     filters,
     page: currentPage,
-    pageSize,
+    page_size: pageSize,
   });
 
   const { setMeetings, meetings } = useMeetingStore();
@@ -134,7 +128,6 @@ export const Timeline: React.FC = () => {
             options={[
               { label: '已完成', value: 'completed' },
               { label: '处理中', value: 'processing' },
-              { label: '待处理', value: 'pending' },
               { label: '出错', value: 'error' },
             ]}
           />
@@ -179,7 +172,7 @@ export const Timeline: React.FC = () => {
               />
             ))}
           </div>
-          {data && data.totalPages > 1 && (
+          {data && data.total_pages > 1 && (
             <div className="flex justify-center mt-8">
               <Pagination
                 current={currentPage}

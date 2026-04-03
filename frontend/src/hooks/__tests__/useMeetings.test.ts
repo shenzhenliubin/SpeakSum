@@ -19,7 +19,7 @@ describe('useMeetings', () => {
 
   it('should return initial state', () => {
     const { result } = renderHook(
-      () => useMeetings({ filters: {}, page: 1, pageSize: 10 }),
+      () => useMeetings({ filters: {}, page: 1, page_size: 10 }),
       { wrapper }
     );
 

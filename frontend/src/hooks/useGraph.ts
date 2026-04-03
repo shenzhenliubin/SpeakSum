@@ -1,12 +1,13 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { graphApi } from '@/services/graphApi';
 import { useGraphStore } from '@/stores/graphStore';
-import type { GraphLayout, GraphNode, Speech } from '@/types';
+import type { GraphLayout, Topic, Speech } from '@/types';
 
 const GRAPH_KEY = 'graph';
 const TOPIC_SPEECHES_KEY = 'topicSpeeches';
 
 // Get graph layout
+// GET /api/v1/knowledge-graph
 export const useGraphLayout = () => {
   const setLayout = useGraphStore((state) => state.setLayout);
 
@@ -21,56 +22,30 @@ export const useGraphLayout = () => {
   });
 };
 
-// Update node position
-export const useUpdateNodePosition = () => {
-  return useMutation({
-    mutationFn: ({
-      nodeId,
-      position,
-    }: {
-      nodeId: string;
-      position: { x: number; y: number };
-    }) => graphApi.updateNodePosition(nodeId, position),
-  });
-};
-
-// Reset layout
-export const useResetLayout = () => {
-  const queryClient = useQueryClient();
-  const setLayout = useGraphStore((state) => state.setLayout);
-
-  return useMutation({
-    mutationFn: () => graphApi.resetLayout(),
-    onSuccess: (layout) => {
-      setLayout(layout);
-      queryClient.setQueryData([GRAPH_KEY, 'layout'], layout);
-    },
-  });
-};
-
 // Get speeches for a topic
+// GET /api/v1/knowledge-graph/topics/{topic_id}/speeches
 export const useTopicSpeeches = (topicId: string | undefined) => {
-  return useQuery<Speech[]>({
+  return useQuery<{ topic: Topic; speeches: Speech[]; total: number }>({
     queryKey: [TOPIC_SPEECHES_KEY, topicId],
     queryFn: () => graphApi.getTopicSpeeches(topicId!),
     enabled: !!topicId,
   });
 };
 
-// Get connected nodes
-export const useConnectedNodes = (nodeId: string | undefined) => {
+// Get connected nodes (computed from store)
+export const useConnectedNodes = (topicId: string | undefined) => {
   const layout = useGraphStore((state) => state.layout);
 
   return {
-    connectedNodes: layout.edges
-      .filter((edge) => edge.source === nodeId || edge.target === nodeId)
+    connectedTopics: layout.edges
+      .filter((edge) => edge.source === topicId || edge.target === topicId)
       .map((edge) => {
-        const connectedId = edge.source === nodeId ? edge.target : edge.source;
+        const connectedId = edge.source === topicId ? edge.target : edge.source;
         return layout.nodes.find((node) => node.id === connectedId);
       })
-      .filter((node): node is GraphNode => node !== undefined),
+      .filter((node): node is Topic => node !== undefined),
     edges: layout.edges.filter(
-      (edge) => edge.source === nodeId || edge.target === nodeId
+      (edge) => edge.source === topicId || edge.target === topicId
     ),
   };
 };

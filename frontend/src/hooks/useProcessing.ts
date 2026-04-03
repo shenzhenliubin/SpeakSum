@@ -12,8 +12,8 @@ export const useProcessingTask = (taskId: string | undefined) => {
     queryFn: () => uploadApi.getTaskStatus(taskId!),
     refetchInterval: (query) => {
       const data = query.state.data;
-      // Stop polling when completed or error
-      if (data?.status === 'completed' || data?.status === 'error') {
+      // Stop polling when completed or failed (backend uses 'failed' not 'error')
+      if (data?.status === 'completed' || data?.status === 'failed') {
         return false;
       }
       return 2000; // Poll every 2 seconds
@@ -44,7 +44,7 @@ export const useProcessingSSE = (
         taskId,
         (data) => {
           onProgress(data);
-          if (data.status === 'completed' || data.status === 'error') {
+          if (data.status === 'completed' || data.status === 'failed') {
             setIsConnected(false);
             eventSourceRef.current?.close();
           }
@@ -107,10 +107,12 @@ export const useProcessing = (
   useEffect(() => {
     if (pollData && !isConnected) {
       const progressData: ProgressEvent = {
+        task_id: pollData.task_id,
+        meeting_id: pollData.meeting_id,
         status: pollData.status,
-        stage: pollData.stage,
-        percent: pollData.percent,
-        message: pollData.errorMessage,
+        progress: pollData.progress,
+        current_step: pollData.current_step,
+        error_message: pollData.error_message || undefined,
       };
       // Use setTimeout to avoid synchronous setState during render
       const timeoutId = setTimeout(() => {
@@ -126,7 +128,7 @@ export const useProcessing = (
     isConnected,
     isLoading: progress?.status === 'processing' || progress?.status === 'pending',
     isComplete: progress?.status === 'completed',
-    isError: progress?.status === 'error',
-    errorMessage: progress?.message,
+    isError: progress?.status === 'failed',
+    errorMessage: progress?.error_message,
   };
 };

@@ -9,11 +9,6 @@ describe('graphStore', () => {
     store.resetView();
     store.selectTopic(null);
     store.selectSpeech(null);
-    store.setFilter({
-      timeRange: null,
-      topics: [],
-      minAssociationStrength: 0.2,
-    });
   });
 
   it('should have correct initial state', () => {
@@ -22,8 +17,6 @@ describe('graphStore', () => {
     expect(state.pan).toEqual({ x: 0, y: 0 });
     expect(state.selectedTopic).toBeNull();
     expect(state.selectedSpeech).toBeNull();
-    expect(state.filter.topics).toEqual([]);
-    expect(state.filter.minAssociationStrength).toBe(0.2);
     expect(state.isLoading).toBe(false);
   });
 
@@ -33,25 +26,17 @@ describe('graphStore', () => {
       nodes: [
         {
           id: '1',
-          type: 'topic',
-          label: 'Test Topic',
+          name: 'Test Topic',
+          count: 5,
+          meeting_count: 2,
+          first_appearance: new Date().toISOString(),
+          last_appearance: new Date().toISOString(),
           x: 100,
           y: 100,
-          size: 30,
-          data: {
-            id: '1',
-            name: 'Test Topic',
-            speechCount: 5,
-            meetingCount: 2,
-            firstAppearance: new Date().toISOString(),
-            lastAppearance: new Date().toISOString(),
-            relatedTopics: [],
-          },
         },
       ],
       edges: [],
-      version: 1,
-      updatedAt: new Date().toISOString(),
+      layout_version: '1',
     };
 
     store.setLayout(mockLayout);
@@ -64,11 +49,10 @@ describe('graphStore', () => {
     const mockTopic: Topic = {
       id: '1',
       name: 'Test Topic',
-      speechCount: 5,
-      meetingCount: 2,
-      firstAppearance: new Date().toISOString(),
-      lastAppearance: new Date().toISOString(),
-      relatedTopics: [],
+      count: 5,
+      meeting_count: 2,
+      first_appearance: new Date().toISOString(),
+      last_appearance: new Date().toISOString(),
     };
 
     store.selectTopic(mockTopic);
@@ -81,15 +65,16 @@ describe('graphStore', () => {
     const store = useGraphStore.getState();
     const mockSpeech: Speech = {
       id: '1',
-      meetingId: 'm1',
+      meeting_id: 'm1',
       timestamp: '10:30:00',
       speaker: 'Test User',
-      rawText: 'Raw text',
-      cleanedText: 'Cleaned text',
-      keyQuotes: [],
+      raw_text: 'Raw text',
+      cleaned_text: 'Cleaned text',
+      key_quotes: [],
       topics: ['topic1'],
       sentiment: 'neutral',
-      wordCount: 10,
+      word_count: 10,
+      created_at: new Date().toISOString(),
     };
 
     store.selectSpeech(mockSpeech);
@@ -128,14 +113,6 @@ describe('graphStore', () => {
 
     expect(useGraphStore.getState().zoom).toBe(1);
     expect(useGraphStore.getState().pan).toEqual({ x: 0, y: 0 });
-  });
-
-  it('should update filter', () => {
-    const store = useGraphStore.getState();
-
-    store.setFilter({ topics: ['topic1', 'topic2'] });
-
-    expect(useGraphStore.getState().filter.topics).toEqual(['topic1', 'topic2']);
   });
 
   it('should set loading state', () => {

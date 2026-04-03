@@ -8,7 +8,7 @@ describe('meetingStore', () => {
     const store = useMeetingStore.getState();
     store.setMeetings([]);
     store.setCurrentMeeting(null);
-    store.setFilters({ searchQuery: '', dateRange: null, topics: [], status: undefined });
+    store.setFilters({ q: '', status: undefined });
     store.setSelectedSpeaker('我');
     store.setViewMode('timeline');
   });
@@ -20,10 +20,10 @@ describe('meetingStore', () => {
     expect(state.selectedSpeaker).toBe('我');
     expect(state.viewMode).toBe('timeline');
     expect(state.filters).toEqual({
-      searchQuery: '',
-      dateRange: null,
-      topics: [],
+      q: '',
       status: undefined,
+      sort_by: 'created_at',
+      sort_order: 'desc',
     });
     expect(state.isLoading).toBe(false);
   });
@@ -34,26 +34,26 @@ describe('meetingStore', () => {
       {
         id: '1',
         title: 'Test Meeting 1',
-        date: new Date().toISOString(),
+        meeting_date: new Date().toISOString(),
         participants: ['User 1'],
-        sourceFile: 'test1.txt',
-        fileSize: 1024,
+        source_file: 'test1.txt',
+        file_size: 1024,
         status: 'completed',
-        speechCount: 10,
-        mySpeechCount: 5,
-        createdAt: new Date().toISOString(),
+        speech_count: 10,
+        topic_count: 3,
+        created_at: new Date().toISOString(),
       },
       {
         id: '2',
         title: 'Test Meeting 2',
-        date: new Date().toISOString(),
+        meeting_date: new Date().toISOString(),
         participants: ['User 2'],
-        sourceFile: 'test2.txt',
-        fileSize: 2048,
+        source_file: 'test2.txt',
+        file_size: 2048,
         status: 'processing',
-        speechCount: 20,
-        mySpeechCount: 10,
-        createdAt: new Date().toISOString(),
+        speech_count: 20,
+        topic_count: 5,
+        created_at: new Date().toISOString(),
       },
     ];
 
@@ -67,14 +67,14 @@ describe('meetingStore', () => {
     const mockMeeting: Meeting = {
       id: '1',
       title: 'Test Meeting',
-      date: new Date().toISOString(),
+      meeting_date: new Date().toISOString(),
       participants: ['User 1'],
-      sourceFile: 'test.txt',
-      fileSize: 1024,
+      source_file: 'test.txt',
+      file_size: 1024,
       status: 'completed',
-      speechCount: 10,
-      mySpeechCount: 5,
-      createdAt: new Date().toISOString(),
+      speech_count: 10,
+      topic_count: 3,
+      created_at: new Date().toISOString(),
     };
 
     store.addMeeting(mockMeeting);
@@ -88,14 +88,14 @@ describe('meetingStore', () => {
     const mockMeeting: Meeting = {
       id: '1',
       title: 'Test Meeting',
-      date: new Date().toISOString(),
+      meeting_date: new Date().toISOString(),
       participants: ['User 1'],
-      sourceFile: 'test.txt',
-      fileSize: 1024,
+      source_file: 'test.txt',
+      file_size: 1024,
       status: 'completed',
-      speechCount: 10,
-      mySpeechCount: 5,
-      createdAt: new Date().toISOString(),
+      speech_count: 10,
+      topic_count: 3,
+      created_at: new Date().toISOString(),
     };
 
     store.addMeeting(mockMeeting);
@@ -111,14 +111,14 @@ describe('meetingStore', () => {
     const mockMeeting: Meeting = {
       id: '1',
       title: 'Test Meeting',
-      date: new Date().toISOString(),
+      meeting_date: new Date().toISOString(),
       participants: ['User 1'],
-      sourceFile: 'test.txt',
-      fileSize: 1024,
+      source_file: 'test.txt',
+      file_size: 1024,
       status: 'completed',
-      speechCount: 10,
-      mySpeechCount: 5,
-      createdAt: new Date().toISOString(),
+      speech_count: 10,
+      topic_count: 3,
+      created_at: new Date().toISOString(),
     };
 
     store.addMeeting(mockMeeting);
@@ -133,14 +133,14 @@ describe('meetingStore', () => {
     const mockMeeting: Meeting = {
       id: '1',
       title: 'Test Meeting',
-      date: new Date().toISOString(),
+      meeting_date: new Date().toISOString(),
       participants: ['User 1'],
-      sourceFile: 'test.txt',
-      fileSize: 1024,
+      source_file: 'test.txt',
+      file_size: 1024,
       status: 'completed',
-      speechCount: 10,
-      mySpeechCount: 5,
-      createdAt: new Date().toISOString(),
+      speech_count: 10,
+      topic_count: 3,
+      created_at: new Date().toISOString(),
     };
 
     store.setCurrentMeeting(mockMeeting);
@@ -151,8 +151,8 @@ describe('meetingStore', () => {
   it('should set filters', () => {
     const store = useMeetingStore.getState();
 
-    store.setFilters({ searchQuery: 'test' });
-    expect(useMeetingStore.getState().filters.searchQuery).toBe('test');
+    store.setFilters({ q: 'test' });
+    expect(useMeetingStore.getState().filters.q).toBe('test');
 
     store.setFilters({ status: 'completed' });
     expect(useMeetingStore.getState().filters.status).toBe('completed');

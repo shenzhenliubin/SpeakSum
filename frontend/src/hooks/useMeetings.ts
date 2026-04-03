@@ -1,6 +1,5 @@
 import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tanstack/react-query';
 import { meetingApi } from '@/services/meetingApi';
-import { useMeetingStore } from '@/stores/meetingStore';
 import type { Meeting, MeetingFilters, PaginatedResponse } from '@/types';
 
 const MEETINGS_KEY = 'meetings';
@@ -9,17 +8,17 @@ const MEETING_KEY = 'meeting';
 interface UseMeetingsOptions {
   filters?: MeetingFilters;
   page?: number;
-  pageSize?: number;
+  page_size?: number;  // Changed from 'pageSize' to match backend
 }
 
 // Get meetings list with pagination
 export const useMeetings = (options: UseMeetingsOptions = {}) => {
-  const { filters, page = 1, pageSize = 20 } = options;
+  const { filters, page = 1, page_size = 20 } = options;
 
   return useQuery<PaginatedResponse<Meeting>>({
     // Serialize filters object to ensure stable cache key
-    queryKey: [MEETINGS_KEY, JSON.stringify(filters), page, pageSize],
-    queryFn: () => meetingApi.list({ ...filters, page, pageSize }),
+    queryKey: [MEETINGS_KEY, JSON.stringify(filters), page, page_size],
+    queryFn: () => meetingApi.list({ ...filters, page, page_size }),
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 };
@@ -30,9 +29,9 @@ export const useInfiniteMeetings = (filters?: MeetingFilters) => {
     // Serialize filters object to ensure stable cache key
     queryKey: [MEETINGS_KEY, 'infinite', JSON.stringify(filters)],
     queryFn: ({ pageParam = 1 }) =>
-      meetingApi.list({ ...filters, page: pageParam as number, pageSize: 20 }),
+      meetingApi.list({ ...filters, page: pageParam as number, page_size: 20 }),
     getNextPageParam: (lastPage) => {
-      if (lastPage.page < lastPage.totalPages) {
+      if (lastPage.page < lastPage.total_pages) {
         return lastPage.page + 1;
       }
       return undefined;
@@ -54,26 +53,20 @@ export const useMeeting = (id: string | undefined) => {
 // Create meeting mutation
 export const useCreateMeeting = () => {
   const queryClient = useQueryClient();
-  const addMeeting = useMeetingStore((state) => state.addMeeting);
 
   return useMutation({
     mutationFn: async ({
       file,
-      title,
-      date,
-      speakerIdentity,
+      speaker_identity,
       onProgress,
     }: {
       file: File;
-      title: string;
-      date: string;
-      speakerIdentity?: string;
+      speaker_identity?: string;
       onProgress?: (progress: number) => void;
     }) => {
-      return meetingApi.create({ file, title, date, speakerIdentity }, onProgress);
+      return meetingApi.create({ file, speaker_identity }, onProgress);
     },
-    onSuccess: (data) => {
-      addMeeting(data);
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [MEETINGS_KEY] });
     },
   });
@@ -82,12 +75,10 @@ export const useCreateMeeting = () => {
 // Delete meeting mutation
 export const useDeleteMeeting = () => {
   const queryClient = useQueryClient();
-  const removeMeeting = useMeetingStore((state) => state.removeMeeting);
 
   return useMutation({
     mutationFn: (id: string) => meetingApi.delete(id),
-    onSuccess: (_, id) => {
-      removeMeeting(id);
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [MEETINGS_KEY] });
     },
   });

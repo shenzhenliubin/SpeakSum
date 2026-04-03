@@ -54,12 +54,12 @@ const MeetingCard: React.FC<{ meeting: Meeting; onClick: () => void }> = ({
           {meeting.title}
         </h4>
         <p className="text-sm text-text-secondary">
-          {formatRelativeTime(meeting.date)} · {meeting.duration || '未知时长'}
+          {formatRelativeTime(meeting.meeting_date)} · {meeting.duration || '未知时长'}
         </p>
         <div className="flex items-center gap-4 mt-2 text-sm text-text-tertiary">
           <span className="flex items-center gap-1">
             <MessageOutlined />
-            {formatNumber(meeting.mySpeechCount)} 条发言
+            {formatNumber(meeting.speech_count)} 条发言
           </span>
           <span className="flex items-center gap-1">
             <TagOutlined />
@@ -88,7 +88,7 @@ const MeetingCard: React.FC<{ meeting: Meeting; onClick: () => void }> = ({
 
 export const Home: React.FC = () => {
   const navigate = useNavigate();
-  const { data, isLoading } = useMeetings({ page: 1, pageSize: 5 });
+  const { data, isLoading } = useMeetings({ page: 1, page_size: 5 });
   const { meetings, setMeetings } = useMeetingStore();
 
   useEffect(() => {
@@ -99,7 +99,7 @@ export const Home: React.FC = () => {
 
   const stats = [
     { title: '会议总数', value: data?.total || 0, icon: <FileTextOutlined /> },
-    { title: '我的发言', value: meetings.reduce((acc, m) => acc + m.mySpeechCount, 0), icon: <MessageOutlined /> },
+    { title: '我的发言', value: meetings.reduce((acc, m) => acc + m.speech_count, 0), icon: <MessageOutlined /> },
     { title: '参与人数', value: new Set(meetings.flatMap((m) => m.participants)).size, icon: <TagOutlined /> },
   ];
 

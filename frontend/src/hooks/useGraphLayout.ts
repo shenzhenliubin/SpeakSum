@@ -1,7 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { graphApi } from '@/services/graphApi';
-import type { GraphLayout } from '@/types';
+import type { GraphLayout, Speech, Topic } from '@/types';
 
+// Get graph layout
+// GET /api/v1/knowledge-graph
 export function useGraphLayout() {
   return useQuery<GraphLayout>({
     queryKey: ['graph', 'layout'],
@@ -10,18 +12,13 @@ export function useGraphLayout() {
   });
 }
 
-export function useGraphTopics() {
-  return useQuery({
-    queryKey: ['graph', 'topics'],
-    queryFn: () => graphApi.getTopics(),
-    staleTime: 5 * 60 * 1000,
-  });
-}
-
-export function useTopicDetail(topicId: string) {
-  return useQuery({
-    queryKey: ['graph', 'topic', topicId],
-    queryFn: () => graphApi.getTopicDetail(topicId),
+// Get speeches for a topic
+// GET /api/v1/knowledge-graph/topics/{topic_id}/speeches
+export function useTopicSpeeches(topicId: string | undefined) {
+  return useQuery<{ topic: Topic; speeches: Speech[]; total: number }>({
+    queryKey: ['graph', 'topic', topicId, 'speeches'],
+    queryFn: () => graphApi.getTopicSpeeches(topicId!),
     enabled: !!topicId,
+    staleTime: 5 * 60 * 1000,
   });
 }
