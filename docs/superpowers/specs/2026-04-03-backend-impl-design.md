@@ -1,9 +1,9 @@
 # SpeakSum 后端实现设计文档
 
-**文档版本**: 1.0  
+**文档版本**: 1.1  
 **日期**: 2026-04-03  
 **作者**: 后端实现 Agent  
-**状态**: PENDING_REVIEW
+**状态**: REVISED_PER_FEEDBACK（已根据 design review 反馈修改）
 
 ---
 
@@ -22,11 +22,13 @@
 - Celery 异步任务管道
 
 以下功能基于任务要求 **不在本次实现范围内**，留待后续迭代：
-- **认证路由** (`/api/auth/*`)：任务仅要求 `core/security.py` 提供 JWT 处理，不实现注册/登录 API
-- **导出 API** (`/api/export/*`)：任务未列出导出端点
-- **说话人身份管理 API**：任务未在 API 列表中要求
+- **认证路由** (`/api/auth/*`)：任务仅要求 `core/security.py` 提供 JWT 处理，不实现注册/登录 API。标注为**二阶段依赖**。
+- **导出 API** (`/api/export/*`)：任务未列出导出端点。标注为**二阶段依赖**（PRODUCT_DESIGN.md 列为 P1）。
+- **分块上传 API** (`/upload/init`, `/upload/{id}/chunks`, `/upload/{id}/complete`)：MVP 阶段使用简单上传（10MB 限制）。标注为**二阶段/P1**（FRONTEND_DESIGN.md 已设计前端能力）。
+- **任务管理 API** (`/process/{id}/cancel`, `/process/{id}/retry`, `/meetings/{id}/reprocess`)：MVP 阶段依赖 Celery 内置重试，不实现主动取消/重试。标注为**二阶段**。
 - **MinIO 对象存储**：任务要求本地文件上传路径配置，暂未集成 MinIO
 - **Alembic 迁移脚本**：任务标注为"可选"，本次不生成具体 migration 目录
+- **长文本智能分块** (`TextChunker` 完整实现)：预留接口，标注为**P1**（PRODUCT_DESIGN.md 列为 P1）。
 
 **认证策略（MVP）**：
 - 所有业务 API 路由均使用 `Depends(get_current_user)` 注入当前用户
@@ -105,22 +107,59 @@ erDiagram
 | 表名 | 说明 | 关键字段 |
 |------|------|----------|
 | `users` | 用户 | id, email, password_hash, created_at, updated_at |
-| `meetings` | 会议 | id, user_id(fk), title, meeting_date, source_file, file_size, status, created_at, updated_at |
-| `speeches` | 发言 | id, meeting_id(fk), timestamp, speaker, raw_text, cleaned_text, key_quotes(JSONB), topics(JSONB), sentiment, word_count, created_at, updated_at |
+| `meetings` | 会议 | id, user_id(fk), title, meeting_date, **duration_minutes**, **participants**(JSONB), source_file, file_size, status, created_at, updated_at |
+| `speeches` | 发言 | id, meeting_id(fk), **sequence_number**, timestamp, speaker, **is_target_speaker**(bool), raw_text, cleaned_text, key_quotes(JSONB), topics(JSONB), sentiment, word_count, created_at, updated_at |
 | `topics` | 话题 | id, user_id(fk), name, speech_count, meeting_count, first_appearance, last_appearance, embedding(Vector(1536)), created_at, updated_at |
 | `topic_relations` | 话题关联 | id, topic_a_id(fk), topic_b_id(fk), co_occurrence_score, temporal_score, semantic_score, total_score, created_at |
 | `graph_layouts` | 图谱布局 | id, user_id(fk), layout_data(JSONB), version, updated_at |
-| `user_model_configs` | 模型配置 | id, user_id(fk), provider, name, api_key_encrypted, base_url, default_model, is_default, is_enabled, created_at, updated_at |
+| `user_model_configs` | 模型配置 | id, user_id(fk), provider, name, api_key_encrypted, **encryption_version**(int), base_url, default_model, is_default, is_enabled, created_at, updated_at |
+| **speaker_identities** | **说话人身份管理** | **id, user_id(fk), display_name, aliases(JSONB), color, avatar_url, created_at, updated_at** |
+
+**索引设计（PostgreSQL）**:
+- `idx_meetings_user_date`: `(user_id, meeting_date DESC)` - 加速会议列表查询
+- `idx_meetings_title_trgm`: `USING GIN (title gin_trgm_ops)` - 支持标题模糊搜索
+- `idx_speeches_topics_gin`: `USING GIN (topics)` - 加速话题筛选
+- `idx_speeches_raw_text_trgm`: `USING GIN (raw_text gin_trgm_ops)` - 支持内容全文搜索
+- `idx_topics_embedding_ivfflat`: `USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)` - 向量相似度搜索
+- `idx_topic_relations_score`: `(topic_a_id, topic_b_id, total_score DESC)` - 加速关系查询
+
+**注**: `topics.embedding` 当前采用内嵌存储，MVP 阶段满足需求。后续如需支持多向量模型版本，将拆分为独立 `topic_embeddings` 表。
 
 ---
 
 ## 4. API 路由设计
 
+### 4.1 统一响应格式
+
+所有 API 响应遵循统一信封结构（参考 TECH_DESIGN.md 2.2 节）：
+
+```python
+class ApiResponse(BaseModel, Generic[T]):
+    success: bool
+    data: T | None = None
+    meta: dict[str, Any] | None = None  # 分页、总数等元数据
+    error: ErrorDetail | None = None    # 错误详情
+
+class ErrorDetail(BaseModel):
+    code: str
+    message: str
+    details: dict[str, Any] | None = None
+```
+
+**分页参数**: `GET /api/v1/meetings` 等列表接口支持：
+- `page`: 页码（默认 1）
+- `per_page`: 每页数量（默认 20，最大 100）
+- `sort`: 排序字段（如 `-created_at` 表示按创建时间倒序）
+- `start_date`/`end_date`: 时间范围筛选
+
+### 4.2 路由清单
+
 | 路由文件 | 端点 | 方法 | 说明 |
 |----------|------|------|------|
+| **System** | `/health` | GET | 健康检查（数据库连通性、Redis 状态） |
 | `upload.py` | `/api/v1/upload` | POST | 上传会议纪要文件，返回 task_id（需 `Depends(get_current_user)`） |
 | `upload.py` | `/api/v1/upload/{task_id}/status` | GET | 轮询查询处理进度（返回 JSON）（需认证） |
-| `upload.py` | `/api/v1/upload/{task_id}/stream` | GET | SSE 实时推送处理进度（EventSource）（需认证） |
+| `process.py` | `/api/v1/process/{task_id}/stream` | GET | **SSE 实时推送处理进度**（EventSource）（需认证） |
 | `meetings.py` | `/api/v1/meetings` | GET | 会议列表（分页、搜索：按 title / speaker / topic 模糊匹配）（需认证） |
 | `meetings.py` | `/api/v1/meetings/{meeting_id}` | GET | 会议详情（含 speeches）（需认证） |
 | `meetings.py` | `/api/v1/meetings/{meeting_id}` | DELETE | 删除会议（级联删除 speeches）（需认证） |
@@ -129,8 +168,31 @@ erDiagram
 | `speeches.py` | `/api/v1/speeches/{speech_id}` | PATCH | 更新发言（手动修正 cleaned_text/topics）（需认证） |
 | `knowledge_graph.py` | `/api/v1/knowledge-graph` | GET | 获取当前用户的知识图谱数据（nodes + edges）（需认证） |
 | `knowledge_graph.py` | `/api/v1/knowledge-graph/topics/{topic_id}/speeches` | GET | 某话题下的发言列表（需认证） |
+| `knowledge_graph.py` | `/api/v1/knowledge-graph/layout` | **POST** | **保存图谱布局**（保存用户拖拽后的节点位置）（需认证） |
 | `settings.py` | `/api/v1/settings/model` | GET | 获取模型配置列表（需认证） |
 | `settings.py` | `/api/v1/settings/model` | PUT | 更新模型配置（需认证） |
+
+**注**: SSE 端点从 `/api/v1/upload/{task_id}/stream` 调整为 `/api/v1/process/{task_id}/stream`，与 TECH_DESIGN.md 对齐。
+
+### 4.3 限流与运维
+
+**Rate Limiting**: 使用 `slowapi` 库实现基于 Redis 的限流：
+- 通用 API: 100 请求/分钟/用户
+- 上传接口: 10 请求/分钟/用户
+- LLM 调用: 按供应商配额限制
+
+**Health Check**: `GET /health` 返回：
+```json
+{
+  "status": "healthy",
+  "timestamp": "2026-04-03T10:30:00Z",
+  "services": {
+    "database": "connected",
+    "redis": "connected",
+    "celery": "ok"
+  }
+}
+```
 
 ---
 
@@ -145,7 +207,15 @@ erDiagram
 - `extract_speeches(text, target_speaker)`：基于正则 `[HH:MM:SS] 说话人：内容` 提取发言列表
 - `validate_file_type(file_path, allowed_types)`：使用 `python-magic` 检测 MIME 类型，白名单限制为 `.txt` / `.md` / `.doc` / `.docx`
 
-**会议搜索实现策略**：`GET /api/v1/meetings` 的 `q` 参数通过 SQLAlchemy `selectinload` 或 `joinedload` 加载关联的 `speeches`，在 Python 层对 `meeting.title`、`speech.speaker`、`speech.topics (JSONB)`、`speech.raw_text` 进行模糊匹配并聚合评分（标题匹配权重 0.4，内容匹配 0.4，话题匹配 0.2）。数据库层对 `meetings.title` 和 `speeches.raw_text` 建立 GIN / trigram 索引（PostgreSQL `pg_trgm`），确保响应 `<500ms`。
+**会议搜索实现策略（MVP 简化版）**：`GET /api/v1/meetings` 的 `q` 参数通过 SQLAlchemy `selectinload` 或 `joinedload` 加载关联的 `speeches`，在 Python 层对 `meeting.title`、`speech.speaker`、`speech.topics (JSONB)`、`speech.raw_text` 进行模糊匹配并聚合评分（标题匹配权重 0.4，内容匹配 0.4，话题匹配 0.2）。
+
+**⚠️ 性能优化方向（后续迭代）**：
+当前方案在用户会议量增长后可能面临性能瓶颈。优化方向：
+1. 对 `meetings.title` 和 `speeches.raw_text` 建立 PostgreSQL `pg_trgm` GIN 索引
+2. 使用 SQL `ILIKE` 或 `tsvector` 在数据库层完成搜索，减少数据传输
+3. 引入 Elasticsearch/OpenSearch 实现全文检索（大规模场景）
+
+目标：确保响应 `<500ms`，支持百万级会议数据。
 
 ### 5.2 LLM 客户端 (`llm_client.py`)
 
@@ -167,13 +237,28 @@ erDiagram
 - `extract_key_quotes(text)` → 0-3 条金句
 - `extract_topics(text)` → 1-3 个话题标签
 - `analyze_sentiment(text)` → positive/negative/neutral/mixed
-- `chunk_and_process(text, processor)` → 长文本分块处理（预留接口）
+- `chunk_and_process(text, processor)` → 长文本分块处理（**P1 功能预留接口**，MVP 暂不实现）
 
 ### 5.4 知识图谱构建 (`knowledge_graph_builder.py`)
 
 - `build_graph(user_id, db_session)`：基于用户的 topics 和 speeches 生成 nodes + edges
 - `compute_topic_relations(topics)`：共现 + 语义相似度（使用 embedding cosine）+ 时间关联
 - `generate_layout_data(nodes, edges)`：基础力导向图数据（半径/位置），输出前端可用 JSON
+- `save_layout(user_id, layout_data, db_session)`：保存用户调整后的图谱布局到 `graph_layouts` 表
+
+**图谱布局数据格式**：
+```json
+{
+  "nodes": [
+    {"id": "topic_123", "x": 100, "y": 200, "fixed": true},
+    {"id": "speech_456", "x": 150, "y": 250}
+  ],
+  "edges": [
+    {"source": "topic_123", "target": "speech_456"}
+  ],
+  "viewport": {"x": 0, "y": 0, "zoom": 1.0}
+}
+```
 
 ---
 
@@ -187,11 +272,67 @@ erDiagram
 3. **口语清理** → 调用 LLM 逐段清理
 4. **标签提取** → 为每段发言提取话题
 5. **构建图谱** → 更新 topic / topic_relation / graph_layout
-6. 每步更新进度到 Redis；同时通过 Celery 信号机制将进度写入 Redis Pub/Sub 通道，供 SSE 流推送。SSE 连接由 `upload.py` 的 `/api/v1/upload/{task_id}/stream` 端点维护。
+6. 每步更新进度到 Redis；同时通过 Celery 信号机制将进度写入 Redis Pub/Sub 通道，供 SSE 流推送。SSE 连接由 `/api/v1/process/{task_id}/stream` 端点维护。
 
-状态流转：`PENDING` → `PROCESSING` → `SUCCESS` / `FAILED`
+### 6.1.1 状态机详细设计
 
-**Celery 中调用 async LLM 的策略**：在同步 Celery task 内部，通过 `asyncio.run()` 或 `asgiref.sync.async_to_sync()` 桥接调用 `llm_client` 的 `async` 方法。
+采用完整状态流转（参考 TECH_DESIGN.md）：
+
+```
+PENDING → PARSING → EXTRACTING → CLEANING → TAGGING → BUILDING_GRAPH → SUCCESS
+   │         │          │            │          │             │            │
+   │         │          │            │          │             │            └─ 100%
+   │         │          │            │          │             └──────────── 90%
+   │         │          │            │          └─────────────────────────── 75%
+   │         │          │            └───────────────────────────────────── 40-70%
+   │         │          └────────────────────────────────────────────────── 25-40%
+   │         └──────────────────────────────────────────────────────────── 10%
+   └────────────────────────────────────────────────────────────────────── 0%
+   
+   ↓ (任何阶段出错)
+FAILED
+```
+
+| 状态 | 百分比 | 说明 |
+|------|--------|------|
+| `PENDING` | 0% | 任务已创建，等待 Worker 消费 |
+| `PARSING` | 10% | 解析文件，提取原始文本 |
+| `EXTRACTING` | 25-40% | 按说话人提取发言片段 |
+| `CLEANING` | 40-70% | 逐段调用 LLM 清理口语 |
+| `TAGGING` | 75% | 提取话题标签、情感分析 |
+| `BUILDING_GRAPH` | 90% | 更新话题关联、构建图谱 |
+| `SUCCESS` | 100% | 处理完成，数据已入库 |
+| `FAILED` | - | 处理失败，错误信息记录在 meta |
+
+### 6.1.2 Celery 同步任务与异步代码桥接架构
+
+**核心问题**：Celery Worker 运行在同步线程中，而我们的数据库层（SQLAlchemy 2.0 + asyncpg）和 LLM 客户端都是异步的。
+
+**解决方案**：使用 `asyncio.run()` 在同步 task 中显式创建事件循环运行异步代码：
+
+```python
+@app.task(bind=True, base=SqlAlchemyTask, max_retries=3)
+def process_meeting_task(self, meeting_id, file_path, speaker_identity):
+    """同步 Celery task 入口"""
+    return asyncio.run(_process_meeting_async(self, meeting_id, file_path, speaker_identity))
+
+async def _process_meeting_async(self, meeting_id, file_path, speaker_identity):
+    """异步处理逻辑"""
+    async with self.async_session() as db:
+        # 异步数据库操作
+        # 异步 LLM 调用
+        pass
+```
+
+**关键设计点**：
+1. `SqlAlchemyTask` 基类提供 `async_session` 属性，每个 Worker 进程复用同一个 engine
+2. `asyncio.run()` 在每次任务执行时创建新的事件循环，任务完成后自动清理
+3. 这种方式在 Python 3.7+ 中是官方支持的标准做法
+
+**注意事项**：
+- 不要在 task 中调用其他同步的阻塞 IO（如 `time.sleep`），会阻塞整个 Worker
+- 异步代码中的异常需要正确捕获并转换为 Celery 重试逻辑
+- 测试环境使用 `task_always_eager=True` 可直接在测试线程执行
 
 **测试配置**：仅在测试环境（`pytest` fixture / `conftest.py`）中设置 `task_always_eager=True`，生产环境保持异步任务队列。
 
@@ -214,7 +355,36 @@ erDiagram
 - `MAX_UPLOAD_SIZE`
 - `KIMI_API_KEY`, `OPENAI_API_KEY`, `CLAUDE_API_KEY`
 
-**API Key 加密策略**：使用 `cryptography.fernet.Fernet` 对 `user_model_configs.api_key_encrypted` 进行对称加解密。`ENCRYPTION_KEY` 从环境变量读取，生产环境由运维统一管理。
+**API Key 加密策略（AES-256-GCM）**：
+
+遵循 TECH_DESIGN.md 1.3.1 节要求，使用 **AES-256-GCM** 进行对称加密：
+
+```python
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import os
+
+def encrypt_key(plain_text: str, key: bytes) -> tuple[str, int]:
+    """加密 API Key，返回 (encrypted_base64, encryption_version)"""
+    aesgcm = AESGCM(key)
+    nonce = os.urandom(12)  # 96-bit nonce
+    ciphertext = aesgcm.encrypt(nonce, plain_text.encode(), None)
+    encrypted = base64.b64encode(nonce + ciphertext).decode()
+    version = 1  # 当前加密密钥版本，支持密钥轮换
+    return encrypted, version
+
+def decrypt_key(encrypted_base64: str, key: bytes, version: int) -> str:
+    """解密 API Key"""
+    data = base64.b64decode(encrypted_base64)
+    nonce, ciphertext = data[:12], data[12:]
+    aesgcm = AESGCM(key)
+    return aesgcm.decrypt(nonce, ciphertext, None).decode()
+```
+
+**密钥管理**：
+- `ENCRYPTION_KEY`: 32 字节 AES 密钥，从环境变量 `SPEAKSUM_ENCRYPTION_KEY` 读取（Base64 编码）
+- `encryption_version`: 存储于 `user_model_configs.encryption_version` 字段，支持密钥轮换
+- 生产环境由运维统一管理，定期轮换（如每季度）
+- 轮换时保留旧密钥用于解密，新数据使用新密钥加密
 
 ### 7.2 `core/database.py`
 
