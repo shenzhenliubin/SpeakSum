@@ -16,12 +16,26 @@ const queryClient = new QueryClient({
   },
 })
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <ConfigProvider theme={antdTheme}>
-        <RouterProvider router={router} />
-      </ConfigProvider>
-    </QueryClientProvider>
-  </StrictMode>,
-)
+// Enable MSW mocking in development if VITE_USE_MOCK is true
+async function enableMocking() {
+  if (import.meta.env.VITE_USE_MOCK !== 'true') {
+    return
+  }
+
+  const { worker } = await import('./mocks/browser')
+  return worker.start({
+    onUnhandledRequest: 'bypass', // Don't warn about unhandled requests
+  })
+}
+
+enableMocking().then(() => {
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <ConfigProvider theme={antdTheme}>
+          <RouterProvider router={router} />
+        </ConfigProvider>
+      </QueryClientProvider>
+    </StrictMode>,
+  )
+})
