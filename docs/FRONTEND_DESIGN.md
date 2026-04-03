@@ -1,7 +1,8 @@
 # SpeakSum 前端设计规范文档
 
-**文档版本**: 1.0  
+**文档版本**: 1.1  
 **创建日期**: 2026-04-02  
+**更新日期**: 2026-04-03  
 **作者**: Frontend Design Agent  
 **状态**: READY FOR IMPLEMENTATION
 
@@ -9,6 +10,7 @@
 
 ## 目录
 
+0. [技术栈对齐与实现策略](#0-技术栈对齐与实现策略)
 1. [设计规范系统](#1-设计规范系统)
 2. [组件清单](#2-组件清单)
 3. [页面路由设计](#3-页面路由设计)
@@ -16,6 +18,131 @@
 5. [API 对接方案](#5-api-对接方案)
 6. [知识图谱可视化设计](#6-知识图谱可视化设计)
 7. [文件上传设计](#7-文件上传设计)
+
+---
+
+## 0. 技术栈对齐与实现策略
+
+### 0.1 技术栈决策
+
+根据 TECH_ARCHITECTURE.md 的技术选型，前端采用以下技术栈：
+
+| 类别 | 技术选型 | 版本 | 用途 |
+|------|----------|------|------|
+| 框架 | React | >=18.2 | 组件化开发 |
+| 构建工具 | Vite | >=5.0 | 开发服务器和构建 |
+| 类型系统 | TypeScript | >=5.3 | 类型安全 |
+| **UI 组件库** | **Ant Design** | >=5.14 | **基础组件（定制主题）** |
+| 状态管理 | Zustand | >=4.4 | 全局状态 |
+| 数据获取 | TanStack Query | >=5.0 | API 缓存和状态 |
+| 可视化 | D3.js + ECharts | D3>=7, ECharts>=5 | 知识图谱和图表 |
+| 路由 | React Router | v6 | 页面路由 |
+| 样式方案 | Tailwind CSS | >=3.4 | 原子化样式补充 |
+
+**关键决策**：使用 Ant Design 5.x 作为基础组件库，通过 ConfigProvider 定制主题，辅以 Tailwind CSS 处理细粒度样式。
+
+### 0.2 Ant Design 主题配置
+
+```typescript
+// theme/antdTheme.ts
+import { ThemeConfig } from 'antd';
+
+export const antdTheme: ThemeConfig = {
+  token: {
+    // 品牌色
+    colorPrimary: '#c8734f',
+    colorPrimaryHover: '#d68860',
+    colorPrimaryActive: '#9e5434',
+    
+    // 背景色
+    colorBgBase: '#f4ede4',
+    colorBgContainer: '#fffaf4',
+    colorBgElevated: '#fffaf4',
+    
+    // 文字色
+    colorTextBase: '#31291f',
+    colorText: '#31291f',
+    colorTextSecondary: '#74614f',
+    colorTextTertiary: '#9e8b79',
+    
+    // 边框
+    colorBorder: '#dfd1c0',
+    colorBorderSecondary: '#c8b39d',
+    
+    // 圆角
+    borderRadius: 22,
+    borderRadiusLG: 28,
+    borderRadiusSM: 14,
+    borderRadiusXS: 8,
+    
+    // 间距
+    paddingContentHorizontal: 18,
+    paddingContentVertical: 12,
+    
+    // 字体
+    fontFamily: '"Avenir Next", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif',
+    fontFamilyCode: '"SF Mono", "Fira Code", monospace',
+    
+    // 阴影
+    boxShadow: '0 16px 40px rgba(80, 46, 24, 0.05)',
+    boxShadowSecondary: '0 24px 60px rgba(90, 57, 35, 0.08)',
+    
+    // 功能色
+    colorSuccess: '#6f8465',
+    colorWarning: '#d7b082',
+    colorError: '#c8734f',
+    colorInfo: '#8fa17a',
+  },
+  components: {
+    Button: {
+      borderRadius: 999, // 胶囊按钮
+      paddingInline: 18,
+      paddingBlock: 12,
+    },
+    Card: {
+      borderRadius: 28,
+      padding: 22,
+    },
+    Input: {
+      borderRadius: 18,
+      paddingInline: 16,
+      paddingBlock: 14,
+    },
+    Menu: {
+      borderRadius: 14,
+    },
+    Tag: {
+      borderRadius: 999,
+    },
+  },
+};
+
+// App.tsx 中使用
+import { ConfigProvider } from 'antd';
+
+const App: React.FC = () => (
+  <ConfigProvider theme={antdTheme}>
+    <RouterProvider router={router} />
+  </ConfigProvider>
+);
+```
+
+### 0.3 组件使用策略
+
+| 组件类型 | 来源 | 说明 |
+|----------|------|------|
+| 基础组件（Button, Input, Card, Modal 等） | Ant Design | 直接使用，通过主题定制样式 |
+| 布局组件（Layout, Header, Sidebar） | Ant Design + 自定义 | 使用 Ant Layout，外观自定义 |
+| 业务组件（MeetingCard, SpeechItem） | 自定义 | 基于 Ant 组件组合封装 |
+| 图表组件（知识图谱） | D3.js | 完全自定义，不使用 Ant |
+| 复杂表单 | Ant Design Form | 使用 Ant Form 及其验证能力 |
+
+### 0.4 样式优先级规则
+
+1. **Ant Design Token > Tailwind 工具类 > 自定义 CSS**
+2. 优先使用 Ant Design 组件的原生能力
+3. 细粒度样式调整使用 Tailwind（如 `ml-4`, `text-center`）
+4. 复杂渐变、阴影使用自定义 CSS
 
 ---
 
@@ -146,7 +273,7 @@ export default {
       },
       
       fontFamily: {
-        'ui': ['"Avenir Next"', '"PingFang SC"', '"Hiragino Sans GB"', '"Microsoft YaHei"', 'sans-serif'],
+        'ui': ['"Avenir Next"', '"PingFang SC"', '"Hiragino Sans GB"', '"Noto Sans SC"', '"Source Han Sans SC"', '"Microsoft YaHei"', 'sans-serif'],
         'display': ['"Iowan Old Style"', '"Palatino Linotype"', '"Book Antiqua"', '"Songti SC"', '"STSong"', 'serif'],
       },
     },
@@ -291,6 +418,32 @@ export const breakpoints = {
 };
 ```
 
+#### 响应式适配策略
+
+| 断点 | 设备类型 | 布局策略 | 导航方式 |
+|------|----------|----------|----------|
+| < 768px | 手机 | 单列布局，内容堆叠 | 底部固定导航 |
+| 768px - 1024px | 平板 | 单列/双列自适应 | 侧边抽屉导航 |
+| > 1024px | 桌面 | 多列网格布局 | 顶部水平导航 |
+
+**各页面响应式规则：**
+
+```typescript
+// 首页响应式
+// Desktop (>1280px): 双列网格，左侧 Hero 右侧预览
+// Tablet (768-1280px): 单列，Hero 在上，功能卡片在下
+// Mobile (<768px): 单列，简化 Hero，垂直堆叠功能卡片
+
+// 会议时间线响应式
+// Desktop: 左侧过滤器固定，右侧列表
+// Tablet/Mobile: 过滤器收起为抽屉，点击筛选按钮展开
+
+// 知识图谱响应式
+// Desktop: 图谱画布 + 右侧详情面板
+// Tablet: 图谱全屏，详情改为底部滑出面板
+// Mobile: 图谱全屏，简化节点显示，详情为全屏弹窗
+```
+
 ---
 
 ### 1.4 组件设计规范
@@ -346,33 +499,42 @@ const buttonStyles = {
 
 ```typescript
 interface CardProps {
-  variant: 'default' | 'hero' | 'pad';
+  variant?: 'default' | 'hero';
+  padding?: 'none' | 'sm' | 'md' | 'lg';
   children: React.ReactNode;
   className?: string;
 }
 
 // 样式定义
 const cardStyles = {
-  default: {
+  base: {
     background: '#fffaf4',
     border: '1px solid rgba(200, 179, 157, 0.62)',
     borderRadius: '28px',
     boxShadow: '0 16px 40px rgba(80, 46, 24, 0.05)',
   },
-  hero: {
-    background: `
-      radial-gradient(circle at 20% 20%, rgba(216, 165, 116, 0.18), transparent 24%),
-      radial-gradient(circle at 80% 18%, rgba(111, 132, 101, 0.16), transparent 22%),
-      linear-gradient(180deg, rgba(255, 250, 244, 0.96), rgba(249, 241, 233, 0.92))
-    `,
-    border: '1px solid rgba(200, 179, 157, 0.62)',
-    borderRadius: '28px',
-    boxShadow: '0 16px 40px rgba(80, 46, 24, 0.05)',
+  variant: {
+    default: {},
+    hero: {
+      background: `
+        radial-gradient(circle at 20% 20%, rgba(216, 165, 116, 0.18), transparent 24%),
+        radial-gradient(circle at 80% 18%, rgba(111, 132, 101, 0.16), transparent 22%),
+        linear-gradient(180deg, rgba(255, 250, 244, 0.96), rgba(249, 241, 233, 0.92))
+      `,
+    },
   },
-  pad: {
-    padding: '22px',
+  padding: {
+    none: { padding: 0 },
+    sm: { padding: '14px' },
+    md: { padding: '22px' },
+    lg: { padding: '32px' },
   },
 };
+
+// 使用示例
+// <Card variant="hero" padding="lg">...</Card>
+// <Card padding="md">...</Card>  // 默认 variant="default"
+// <Card>...</Card>  // 默认 variant="default", padding="md"
 ```
 
 #### Input 输入框
@@ -500,6 +662,82 @@ interface ComponentSpec {
   events: [];
   dependencies: ['Header', 'Sidebar'];
 }
+
+// components/common/EmptyState.tsx
+// 空状态组件
+
+interface EmptyStateProps {
+  type: 'noData' | 'noSearchResult' | 'noPermission' | 'error' | 'emptyGraph';
+  title?: string;
+  description?: string;
+  icon?: React.ReactNode;
+  action?: {
+    label: string;
+    onClick: () => void;
+  };
+  secondaryAction?: {
+    label: string;
+    onClick: () => void;
+  };
+}
+
+interface ComponentSpec {
+  name: 'EmptyState';
+  location: 'src/components/common/EmptyState.tsx';
+  props: {
+    type: "'noData' | 'noSearchResult' | 'noPermission' | 'error' | 'emptyGraph'";
+    title: 'string | undefined';
+    description: 'string | undefined';
+    icon: 'React.ReactNode | undefined';
+    action: '{ label: string; onClick: () => void; } | undefined';
+    secondaryAction: '{ label: string; onClick: () => void; } | undefined';
+  };
+  state: [];
+  events: ['onActionClick', 'onSecondaryActionClick'];
+  dependencies: ['Button', 'Illustration'];
+}
+
+// 空状态配置
+const emptyStateConfig = {
+  noData: {
+    icon: '📭',
+    defaultTitle: '暂无数据',
+    defaultDescription: '还没有任何会议记录，上传第一份会议纪要开始吧',
+    actionLabel: '上传会议',
+  },
+  noSearchResult: {
+    icon: '🔍',
+    defaultTitle: '未找到结果',
+    defaultDescription: '换个关键词试试看？',
+    actionLabel: '清除筛选',
+  },
+  noPermission: {
+    icon: '🔒',
+    defaultTitle: '无权访问',
+    defaultDescription: '你需要登录后才能查看此内容',
+    actionLabel: '去登录',
+  },
+  error: {
+    icon: '⚠️',
+    defaultTitle: '出错了',
+    defaultDescription: '加载数据时遇到问题，请重试',
+    actionLabel: '重试',
+  },
+  emptyGraph: {
+    icon: '🏝️',
+    defaultTitle: '知识图谱为空',
+    defaultDescription: '上传会议并处理后，你的知识岛屿将在这里呈现',
+    actionLabel: '上传会议',
+  },
+};
+
+// 使用示例
+// <EmptyState
+//   type="noData"
+//   title="还没有会议记录"
+//   description="上传第一份会议纪要，开始构建你的知识图谱"
+//   action={{ label: '立即上传', onClick: () => navigate('/upload') }}
+// />
 ```
 
 #### Header
@@ -1436,12 +1674,42 @@ import { useMeetingStore } from '@/stores/meetingStore';
 
 const MEETINGS_KEY = 'meetings';
 
-// 获取会议列表
-export const useMeetings = (filters?: MeetingFilters) => {
-  return useQuery({
-    queryKey: [MEETINGS_KEY, filters],
-    queryFn: () => meetingApi.list(filters),
+// 分页参数接口
+interface PaginationParams {
+  page?: number;
+  pageSize?: number;
+}
+
+// 会议列表响应
+interface PaginatedMeetings {
+  items: Meeting[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+// 获取会议列表（支持分页）
+export const useMeetings = (filters?: MeetingFilters, pagination?: PaginationParams) => {
+  return useQuery<PaginatedMeetings>({
+    queryKey: [MEETINGS_KEY, filters, pagination],
+    queryFn: () => meetingApi.list({ ...filters, ...pagination }),
     staleTime: 5 * 60 * 1000, // 5分钟
+  });
+};
+
+// 无限滚动加载（替代分页）
+export const useInfiniteMeetings = (filters?: MeetingFilters) => {
+  return useInfiniteQuery({
+    queryKey: [MEETINGS_KEY, 'infinite', filters],
+    queryFn: ({ pageParam = 1 }) =>
+      meetingApi.list({ ...filters, page: pageParam, pageSize: 20 }),
+    getNextPageParam: (lastPage) => {
+      if (lastPage.page < lastPage.totalPages) {
+        return lastPage.page + 1;
+      }
+      return undefined;
+    },
   });
 };
 
@@ -1567,6 +1835,83 @@ export const useProcessingSSE = (taskId: string, onProgress: (data: ProgressEven
 ### 5.3 API 错误处理规范
 
 ```typescript
+// services/identityApi.ts
+import { apiClient } from './api';
+
+export interface SpeakerIdentity {
+  id: string;
+  name: string;
+  isDefault: boolean;
+  usageCount: number;
+  createdAt: string;
+}
+
+export interface CreateIdentityRequest {
+  name: string;
+}
+
+export const identityApi = {
+  // 获取身份列表
+  list: (): Promise<SpeakerIdentity[]> =>
+    apiClient.get('/identities'),
+
+  // 创建新身份
+  create: (data: CreateIdentityRequest): Promise<SpeakerIdentity> =>
+    apiClient.post('/identities', data),
+
+  // 设置默认身份
+  setDefault: (id: string): Promise<void> =>
+    apiClient.patch(`/identities/${id}/default`, {}),
+
+  // 更新身份
+  update: (id: string, data: Partial<CreateIdentityRequest>): Promise<SpeakerIdentity> =>
+    apiClient.put(`/identities/${id}`, data),
+
+  // 删除身份
+  delete: (id: string): Promise<void> =>
+    apiClient.delete(`/identities/${id}`),
+};
+
+// services/graphApi.ts
+import { apiClient } from './api';
+
+export interface GraphLayout {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  version: number;
+  updatedAt: string;
+}
+
+export interface UpdateLayoutRequest {
+  nodes: Array<{
+    id: string;
+    x: number;
+    y: number;
+  }>;
+  version: number;
+}
+
+export const graphApi = {
+  // 获取图谱布局
+  getLayout: (): Promise<GraphLayout> =>
+    apiClient.get('/graph/layout'),
+
+  // 更新节点位置
+  updateNodePosition: (
+    nodeId: string,
+    position: { x: number; y: number }
+  ): Promise<void> =>
+    apiClient.patch(`/graph/nodes/${nodeId}/position`, position),
+
+  // 批量更新布局
+  updateLayout: (data: UpdateLayoutRequest): Promise<GraphLayout> =>
+    apiClient.put('/graph/layout', data),
+
+  // 重置布局为自动计算
+  resetLayout: (): Promise<GraphLayout> =>
+    apiClient.post('/graph/layout/reset', {}),
+};
+
 // services/errorHandler.ts
 import { useUIStore } from '@/stores/uiStore';
 
@@ -1888,22 +2233,36 @@ export const animatePositionUpdate = (
     .attr('transform', (d) => `translate(${d.x},${d.y})`);
 };
 
-// 关联线渐显
+// 关联线渐显（高性能 CSS 方案）
 export const animateLinkAppearance = (
   selection: d3.Selection<SVGPathElement, GraphEdge, null, undefined>
 ) => {
   selection
-    .attr('stroke-dasharray', function() {
-      return (this as SVGPathElement).getTotalLength();
-    })
-    .attr('stroke-dashoffset', function() {
-      return (this as SVGPathElement).getTotalLength();
-    })
+    .attr('class', 'link link-animate')
+    .attr('opacity', 0)
     .transition()
     .duration(500)
     .ease(d3.easeLinear)
-    .attr('stroke-dashoffset', 0);
+    .attr('opacity', 1);
 };
+
+// CSS 动画定义（添加到样式文件）
+/*
+.link-animate {
+  stroke-dasharray: 1000;
+  stroke-dashoffset: 1000;
+  animation: dash 0.5s ease-out forwards;
+}
+
+@keyframes dash {
+  to { stroke-dashoffset: 0; }
+}
+
+// 简化方案（不使用 path animation）
+.link-simple {
+  transition: opacity 0.3s ease;
+}
+*/
 ```
 
 ### 6.4 性能优化
