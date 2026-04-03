@@ -8,6 +8,7 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = "sqlite+aiosqlite:///./speaksum.db"
     REDIS_URL: str = "redis://localhost:6379/0"
+    # DEV ONLY: must override via env var in production
     SECRET_KEY: str = "dev-secret-key-change-in-production"
     ENCRYPTION_KEY: str = ""
     UPLOAD_DIR: str = "./uploads"
