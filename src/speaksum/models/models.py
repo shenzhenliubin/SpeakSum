@@ -12,10 +12,10 @@ from sqlalchemy.types import TypeDecorator
 def _get_vector_type() -> type[Any]:
     """Return pgvector's Vector type if available, otherwise a Text fallback."""
     try:
-        from pgvector.sqlalchemy import Vector
-        return Vector
+        from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
+        return Vector  # type: ignore[no-any-return]
     except Exception:  # pragma: no cover
-        class _FallbackVector(TypeDecorator):
+        class _FallbackVector(TypeDecorator[Any]):
             impl = Text
             cache_ok = True
 
@@ -33,7 +33,8 @@ def _get_vector_type() -> type[Any]:
                 if value is None:
                     return None
                 import json
-                return json.loads(value)
+                result: list[float] = json.loads(value)
+                return result
 
         return _FallbackVector
 
