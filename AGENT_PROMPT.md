@@ -20,6 +20,82 @@
 | 产品设计文档 | `../develop/docs/PRODUCT_DESIGN.md` | 用户流程和功能定义 |
 | 技术架构文档 | `../develop/docs/TECH_ARCHITECTURE.md` | 技术选型和API规范 |
 | 后端设计文档 | `../develop/docs/backend-impl-design.md` | API接口定义 |
+| **API契约文件** | **`../develop/docs/openapi.yaml`** | **⚠️ API规范唯一标准** |
+
+---
+
+### ⚠️ 重要：API规范说明
+
+**必须以 `../develop/docs/openapi.yaml` 为准，而非前端设计文档第5章！**
+
+前端设计文档中的API端点（如 `/upload/init`, `/graph/layout` 等）与后端实际实现不一致，请勿使用。
+
+#### 正确的API端点列表
+
+| 功能 | 端点 | 方法 | 对应前端页面 |
+|------|------|------|-------------|
+| 上传文件 | `/api/v1/upload` | POST | Upload.tsx |
+| 查询进度 | `/api/v1/upload/{task_id}/status` | GET | Upload.tsx |
+| 实时推送 | `/api/v1/upload/{task_id}/stream` | GET | Upload.tsx |
+| 会议列表 | `/api/v1/meetings` | GET | Home.tsx |
+| 会议详情 | `/api/v1/meetings/{meeting_id}` | GET | Timeline.tsx |
+| 删除会议 | `/api/v1/meetings/{meeting_id}` | DELETE | Home.tsx |
+| 发言列表 | `/api/v1/meetings/{meeting_id}/speeches` | GET | Timeline.tsx |
+| 发言详情 | `/api/v1/speeches/{speech_id}` | GET | Timeline.tsx |
+| 更新发言 | `/api/v1/speeches/{speech_id}` | PATCH | Timeline.tsx |
+| 知识图谱 | `/api/v1/knowledge-graph` | GET | KnowledgeGraph.tsx |
+| 话题发言 | `/api/v1/knowledge-graph/topics/{topic_id}/speeches` | GET | KnowledgeGraph.tsx |
+| 模型配置 | `/api/v1/settings/model` | GET/PUT | Settings.tsx |
+
+#### 生成的TypeScript类型（可选）
+
+```bash
+# 安装工具
+npm install -D openapi-typescript
+
+# 生成类型文件（推荐执行）
+npx openapi-typescript ../develop/docs/openapi.yaml -o src/api/types.ts
+```
+
+#### React Query Hooks 模板
+
+```typescript
+// hooks/useMeetings.ts
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { apiClient } from '@/services/api';
+
+export const useMeetings = (params?: { q?: string; page?: number; page_size?: number }) => {
+  return useQuery({
+    queryKey: ['meetings', params],
+    queryFn: () => apiClient.get('/api/v1/meetings', params),
+  });
+};
+
+export const useMeeting = (id: string) => {
+  return useQuery({
+    queryKey: ['meeting', id],
+    queryFn: () => apiClient.get(`/api/v1/meetings/${id}`),
+    enabled: !!id,
+  });
+};
+
+export const useUploadMeeting = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (file: File) => apiClient.upload('/api/v1/upload', file),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['meetings'] });
+    },
+  });
+};
+
+export const useKnowledgeGraph = () => {
+  return useQuery({
+    queryKey: ['knowledge-graph'],
+    queryFn: () => apiClient.get('/api/v1/knowledge-graph'),
+  });
+};
+```
 
 ---
 
