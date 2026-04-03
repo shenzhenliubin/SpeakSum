@@ -31,10 +31,14 @@ async def upload_file(
     upload_dir = Path(settings.UPLOAD_DIR)
     upload_dir.mkdir(parents=True, exist_ok=True)
 
-    ext = Path(file.filename or "txt").suffix
+    ext = Path(file.filename or "txt").suffix.lower()
+    if ext not in {".txt", ".md", ".doc", ".docx"}:
+        raise HTTPException(status_code=400, detail="Unsupported file format")
+
     file_name = f"{uuid.uuid4().hex}{ext}"
     file_path = upload_dir / file_name
 
+    # The 10MB limit makes an in-memory read acceptable.
     content = await file.read()
     if len(content) > settings.MAX_UPLOAD_SIZE:
         raise HTTPException(status_code=400, detail="File too large")

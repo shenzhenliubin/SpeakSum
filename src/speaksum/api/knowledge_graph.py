@@ -45,6 +45,7 @@ async def get_topic_speeches(
         .where(Meeting.user_id == user_id)
         .where(Speech.topics.contains([topic.name]))
         .order_by(Speech.timestamp)
+        .distinct()
     )
     speeches = result.scalars().all()
     return [SpeechResponse.model_validate(s) for s in speeches]

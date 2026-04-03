@@ -1,8 +1,10 @@
-"""Security utilities: JWT, password hashing, current user dependency."""
+"""Security utilities: JWT, password hashing, key encryption, current user dependency."""
 
+import base64
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from cryptography.fernet import Fernet
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
@@ -42,3 +44,35 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials | None = De
     if not credentials:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     return verify_token(credentials.credentials)
+
+
+def _get_fernet() -> Fernet | None:
+    key = settings.ENCRYPTION_KEY
+    if not key:
+        return None
+    raw = key.encode()[:32].ljust(32, b"0")[:32]
+    fernet_key = base64.urlsafe_b64encode(raw)
+    return Fernet(fernet_key)
+
+
+def encrypt_key(plain: str | None) -> str | None:
+    if not plain:
+        return None
+    f = _get_fernet()
+    if f is None:
+        return plain
+    encrypted: str = f.encrypt(plain.encode()).decode()
+    return encrypted
+
+
+def decrypt_key(encrypted: str | None) -> str | None:
+    if not encrypted:
+        return None
+    f = _get_fernet()
+    if f is None:
+        return encrypted
+    try:
+        decrypted: str = f.decrypt(encrypted.encode()).decode()
+        return decrypted
+    except Exception:
+        return encrypted

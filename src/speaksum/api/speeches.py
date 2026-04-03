@@ -68,8 +68,14 @@ async def update_speech(
     if not speech:
         raise HTTPException(status_code=404, detail="Speech not found")
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(speech, field, value)
+    if payload.cleaned_text is not None:
+        speech.cleaned_text = payload.cleaned_text
+    if payload.key_quotes is not None:
+        speech.key_quotes = payload.key_quotes
+    if payload.topics is not None:
+        speech.topics = payload.topics
+    if payload.sentiment is not None:
+        speech.sentiment = payload.sentiment
 
     await db.commit()
     await db.refresh(speech)
