@@ -55,6 +55,7 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(default=now_utc, onupdate=now_utc)
@@ -167,6 +168,15 @@ class UserModelConfig(Base):
 
     user: Mapped["User"] = relationship("User", back_populates="model_configs")
 
+    @property
+    def api_key(self) -> str | None:
+        from speaksum.core.security import decrypt_key
+        return decrypt_key(self.api_key_encrypted, self.encryption_version)
+
+    @property
+    def has_api_key(self) -> bool:
+        return self.api_key_encrypted is not None and self.api_key_encrypted != ""
+
 
 class SpeakerIdentity(Base):
     __tablename__ = "speaker_identities"
@@ -177,6 +187,7 @@ class SpeakerIdentity(Base):
     aliases: Mapped[list[str] | None] = mapped_column(JSON, default=list)
     color: Mapped[str | None] = mapped_column(String(7), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    is_default: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(default=now_utc, onupdate=now_utc)
 

@@ -35,31 +35,45 @@ async def update_model_configs(
 ) -> list[ModelConfigResponse]:
     user_id = current_user.get("sub", "")
 
-    # Use atomic transaction to ensure consistency
-    async with db.begin():
-        # Delete existing configs within transaction
-        existing_result = await db.execute(select(UserModelConfig).where(UserModelConfig.user_id == user_id))
-        for existing in existing_result.scalars().all():
-            await db.delete(existing)
+    # Fetch existing configs to preserve api_key when not re-provided
+    existing_result = await db.execute(select(UserModelConfig).where(UserModelConfig.user_id == user_id))
+    existing_by_name = {c.name: c for c in existing_result.scalars().all()}
 
-        created: list[UserModelConfig] = []
-        for payload in payloads:
+    # Delete existing configs
+    for existing in existing_by_name.values():
+        await db.delete(existing)
+
+    created: list[UserModelConfig] = []
+    for payload in payloads:
+        if payload.api_key:
+            # New key provided: encrypt and store
             encrypted_key, enc_version = encrypt_key(payload.api_key)
-            config = UserModelConfig(
-                user_id=user_id,
-                provider=payload.provider,
-                name=payload.name,
-                api_key_encrypted=encrypted_key,
-                encryption_version=enc_version,
-                base_url=payload.base_url,
-                default_model=payload.default_model,
-                is_default=payload.is_default,
-                is_enabled=payload.is_enabled,
-            )
-            db.add(config)
-            created.append(config)
+        else:
+            # No new key: preserve existing encrypted key if available
+            old = existing_by_name.get(payload.name)
+            if old and old.api_key_encrypted:
+                encrypted_key = old.api_key_encrypted
+                enc_version = old.encryption_version
+            else:
+                encrypted_key = None
+                enc_version = 1
 
-    # Refresh after transaction commit
+        config = UserModelConfig(
+            user_id=user_id,
+            provider=payload.provider,
+            name=payload.name,
+            api_key_encrypted=encrypted_key,
+            encryption_version=enc_version,
+            base_url=payload.base_url,
+            default_model=payload.default_model,
+            is_default=payload.is_default,
+            is_enabled=payload.is_enabled,
+        )
+        db.add(config)
+        created.append(config)
+
+    await db.commit()
+
     for c in created:
         await db.refresh(c)
     return [ModelConfigResponse.model_validate(c) for c in created]

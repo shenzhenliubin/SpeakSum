@@ -1,50 +1,46 @@
 import { apiClient } from './api';
-import type { ModelConfig, ModelProvider } from '@/types';
+import type { ModelConfig, SpeakerIdentity } from '@/types';
 
-// Model config aligned with backend OpenAPI
-interface ModelConfigRequest {
-  provider: ModelProvider;
-  name: string;
-  api_key?: string;
-  base_url?: string;
-  default_model: string;
-  is_default?: boolean;
-  is_enabled?: boolean;
-}
-
-// Settings update request aligned with backend
-interface SettingsUpdateRequest {
-  action: 'create' | 'update' | 'delete';
-  config_id?: string;
-  config?: ModelConfigRequest;
-}
-
-// Settings response aligned with backend
-interface SettingsResponse {
-  configs: ModelConfig[];
-  default_config_id: string | null;
+// Backend envelope for speaker identities
+interface Envelope<T> {
+  success: boolean;
+  data: T;
+  meta: unknown;
+  error: unknown;
 }
 
 export const settingsApi = {
   // Get model configurations
   // GET /api/v1/settings/model
-  // Returns: { configs: ModelConfig[], default_config_id: string | null }
-  getModelConfigs: (): Promise<SettingsResponse> =>
+  getModelConfigs: (): Promise<ModelConfig[]> =>
     apiClient.get('/settings/model'),
 
-  // Update model configuration (create/update/delete)
+  // Update model configurations (full replacement)
   // PUT /api/v1/settings/model
-  updateModelConfig: (data: SettingsUpdateRequest): Promise<{ success: boolean }> =>
-    apiClient.put('/settings/model', data),
+  // Note: api_key is only sent for creation/update, never received back
+  updateModelConfigs: (configs: ModelConfig[]): Promise<ModelConfig[]> => {
+    const body = configs.map((c) => ({
+      provider: c.provider,
+      name: c.name,
+      api_key: (c as Record<string, unknown>).api_key as string | undefined,
+      base_url: c.base_url,
+      default_model: c.default_model,
+      is_default: c.is_default,
+      is_enabled: c.is_enabled,
+    }));
+    return apiClient.put('/settings/model', body);
+  },
 
-  // Note: Speaker identity endpoints are not defined in OpenAPI yet
-  // These are placeholders for future implementation
-  getIdentities: (): Promise<{ id: string; name: string }[]> =>
-    Promise.resolve([]),
+  // Speaker identities
+  getIdentities: (): Promise<SpeakerIdentity[]> =>
+    apiClient.get<Envelope<SpeakerIdentity[]>>('/speaker-identities').then((res) => res.data),
 
-  createIdentity: (_data: { name: string }): Promise<{ id: string; name: string }> =>
-    Promise.resolve({ id: '', name: '' }),
+  createIdentity: (data: Omit<SpeakerIdentity, 'id' | 'created_at' | 'updated_at'>): Promise<SpeakerIdentity> =>
+    apiClient.post<Envelope<SpeakerIdentity>>('/speaker-identities', data).then((res) => res.data),
 
-  deleteIdentity: (_id: string): Promise<void> =>
-    Promise.resolve(),
+  updateIdentity: (id: string, data: Omit<SpeakerIdentity, 'id' | 'created_at' | 'updated_at'>): Promise<SpeakerIdentity> =>
+    apiClient.put<Envelope<SpeakerIdentity>>(`/speaker-identities/${id}`, data).then((res) => res.data),
+
+  deleteIdentity: (id: string): Promise<void> =>
+    apiClient.delete(`/speaker-identities/${id}`),
 };

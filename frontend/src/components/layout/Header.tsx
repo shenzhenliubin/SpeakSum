@@ -1,4 +1,4 @@
-import { Button, Avatar, Dropdown, Space, Badge } from 'antd';
+import { Button, Avatar, Dropdown, Space, Badge, Empty } from 'antd';
 import {
   UploadOutlined,
   UserOutlined,
@@ -13,9 +13,53 @@ import { useUIStore } from '@/stores/uiStore';
 export const Header: React.FC = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
-  const { notifications } = useUIStore();
+  const { notifications, removeNotification } = useUIStore();
 
   const unreadCount = notifications.filter((n) => !n.read).length;
+
+  const notificationMenuItems = notifications.length
+    ? [
+        ...notifications.map((n) => ({
+          key: n.id,
+          label: (
+            <div className="max-w-xs flex items-center gap-2">
+              <span
+                className={
+                  n.type === 'error'
+                    ? 'text-status-error'
+                    : n.type === 'success'
+                    ? 'text-status-success'
+                    : n.type === 'warning'
+                    ? 'text-status-warning'
+                    : 'text-blue-500'
+                }
+              >
+                ●
+              </span>
+              <span className="truncate">{n.message}</span>
+            </div>
+          ),
+          onClick: () => removeNotification(n.id),
+        })),
+        { type: 'divider' as const },
+        {
+          key: 'clear',
+          label: '清空全部通知',
+          danger: true,
+          onClick: () => notifications.forEach((n) => removeNotification(n.id)),
+        },
+      ]
+    : [
+        {
+          key: 'empty',
+          label: (
+            <div className="py-2 px-4 text-center text-text-secondary">
+              暂无通知
+            </div>
+          ),
+          disabled: true,
+        },
+      ];
 
   const userMenuItems = [
     {
@@ -75,13 +119,15 @@ export const Header: React.FC = () => {
         />
 
         {/* Notifications */}
-        <Badge count={unreadCount} size="small">
-          <Button
-            type="text"
-            icon={<BellOutlined />}
-            className="text-text-secondary"
-          />
-        </Badge>
+        <Dropdown menu={{ items: notificationMenuItems }} placement="bottomRight" arrow>
+          <Badge count={unreadCount} size="small">
+            <Button
+              type="text"
+              icon={<BellOutlined />}
+              className="text-text-secondary"
+            />
+          </Badge>
+        </Dropdown>
 
         {/* User Menu */}
         <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">

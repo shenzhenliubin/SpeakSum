@@ -1,21 +1,21 @@
 import { useState } from 'react';
-import { Button, Card, List, Tag, Space, Modal, Form, Input, Alert } from 'antd';
+import { Button, Card, List, Tag, Space, Modal, Form, Input, Alert, message } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, CheckCircleOutlined, UserOutlined } from '@ant-design/icons';
-
-interface SpeakerIdentity {
-  id: string;
-  name: string;
-  isDefault: boolean;
-  usageCount: number;
-}
-
-const defaultIdentities: SpeakerIdentity[] = [
-  { id: '1', name: '我', isDefault: true, usageCount: 12 },
-  { id: '2', name: '产品经理', isDefault: false, usageCount: 3 },
-];
+import {
+  useSpeakerIdentities,
+  useCreateSpeakerIdentity,
+  useUpdateSpeakerIdentity,
+  useDeleteSpeakerIdentity,
+} from '@/hooks/useSpeakerIdentities';
+import { LoadingState } from '@/components/common/LoadingState';
+import type { SpeakerIdentity } from '@/types';
 
 export const IdentitySettings: React.FC = () => {
-  const [identities, setIdentities] = useState<SpeakerIdentity[]>(defaultIdentities);
+  const { data: apiIdentities, isLoading } = useSpeakerIdentities();
+  const createMutation = useCreateSpeakerIdentity();
+  const updateMutation = useUpdateSpeakerIdentity();
+  const deleteMutation = useDeleteSpeakerIdentity();
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form] = Form.useForm();
@@ -28,44 +28,88 @@ export const IdentitySettings: React.FC = () => {
 
   const handleEdit = (identity: SpeakerIdentity) => {
     setEditingId(identity.id);
-    form.setFieldsValue({ name: identity.name });
+    form.setFieldsValue({ display_name: identity.display_name });
     setIsModalOpen(true);
   };
 
   const handleDelete = (id: string) => {
-    setIdentities((prev) => prev.filter((i) => i.id !== id));
+    deleteMutation.mutate(id, {
+      onSuccess: () => message.success('删除成功'),
+      onError: () => message.error('删除失败，请重试'),
+    });
   };
 
   const handleSetDefault = (id: string) => {
-    setIdentities((prev) =>
-      prev.map((i) => ({
-        ...i,
-        isDefault: i.id === id,
-      }))
+    const target = apiIdentities?.find((i) => i.id === id);
+    if (!target) return;
+    updateMutation.mutate(
+      {
+        id,
+        data: {
+          display_name: target.display_name,
+          aliases: target.aliases || [],
+          color: target.color || null,
+          avatar_url: target.avatar_url || null,
+          is_default: true,
+        },
+      },
+      {
+        onSuccess: () => message.success('已设为默认'),
+        onError: () => message.error('设置失败，请重试'),
+      }
     );
   };
 
   const handleSave = async () => {
     const values = await form.validateFields();
 
-    if (editingId) {
-      setIdentities((prev) =>
-        prev.map((i) =>
-          i.id === editingId ? { ...i, name: values.name } : i
-        )
-      );
-    } else {
-      const newIdentity: SpeakerIdentity = {
-        id: Date.now().toString(),
-        name: values.name,
-        isDefault: identities.length === 0,
-        usageCount: 0,
-      };
-      setIdentities((prev) => [...prev, newIdentity]);
-    }
+    const data: Omit<SpeakerIdentity, 'id' | 'created_at' | 'updated_at'> = {
+      display_name: values.display_name,
+      aliases: [],
+      color: null,
+      avatar_url: null,
+      is_default: apiIdentities?.length === 0,
+    };
 
-    setIsModalOpen(false);
+    if (editingId) {
+      const target = apiIdentities?.find((i) => i.id === editingId);
+      if (target) {
+        updateMutation.mutate(
+          {
+            id: editingId,
+            data: {
+              ...data,
+              aliases: target.aliases || [],
+              color: target.color || null,
+              avatar_url: target.avatar_url || null,
+              is_default: target.is_default,
+            },
+          },
+          {
+            onSuccess: () => {
+              message.success('保存成功');
+              setIsModalOpen(false);
+            },
+            onError: () => message.error('保存失败，请重试'),
+          }
+        );
+      }
+    } else {
+      createMutation.mutate(data, {
+        onSuccess: () => {
+          message.success('创建成功');
+          setIsModalOpen(false);
+        },
+        onError: () => message.error('创建失败，请重试'),
+      });
+    }
   };
+
+  if (isLoading) {
+    return <LoadingState type="skeleton" rows={3} />;
+  }
+
+  const identities = apiIdentities || [];
 
   return (
     <div>
@@ -87,10 +131,11 @@ export const IdentitySettings: React.FC = () => {
 
         <List
           dataSource={identities}
+          locale={{ emptyText: '暂无身份，请点击右上角添加' }}
           renderItem={(identity) => (
             <List.Item
               actions={[
-                !identity.isDefault && (
+                !identity.is_default && (
                   <Button
                     key="default"
                     type="text"
@@ -111,7 +156,7 @@ export const IdentitySettings: React.FC = () => {
                   danger
                   icon={<DeleteOutlined />}
                   onClick={() => handleDelete(identity.id)}
-                  disabled={identity.isDefault}
+                  disabled={identity.is_default}
                 />,
               ]}
             >
@@ -119,15 +164,15 @@ export const IdentitySettings: React.FC = () => {
                 avatar={<UserOutlined className="text-terracotta text-lg" />}
                 title={
                   <Space>
-                    <span>{identity.name}</span>
-                    {identity.isDefault && (
+                    <span>{identity.display_name}</span>
+                    {identity.is_default && (
                       <Tag color="success" icon={<CheckCircleOutlined />}>
                         默认
                       </Tag>
                     )}
                   </Space>
                 }
-                description={`已使用 ${identity.usageCount} 次`}
+                description={`创建于 ${new Date(identity.created_at).toLocaleDateString()}`}
               />
             </List.Item>
           )}
@@ -144,7 +189,7 @@ export const IdentitySettings: React.FC = () => {
       >
         <Form form={form} layout="vertical" className="mt-4">
           <Form.Item
-            name="name"
+            name="display_name"
             label="身份名称"
             rules={[{ required: true, message: '请输入身份名称' }]}
           >

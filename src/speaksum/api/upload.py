@@ -21,11 +21,16 @@ router = APIRouter(prefix="/api/v1/upload", tags=["Upload"])
 async def upload_file(
     file: UploadFile = File(...),
     speaker_identity: str = Form(""),
+    provider: str = Form(""),
     db: AsyncSession = Depends(get_db),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, str]:
     if not speaker_identity:
         raise HTTPException(status_code=400, detail="speaker_identity is required")
+
+    # Normalize provider (default to kimi if not provided)
+    if not provider or provider == "default":
+        provider = "kimi"
 
     user_id = current_user.get("sub", "")
     upload_dir = Path(settings.UPLOAD_DIR)
@@ -59,7 +64,7 @@ async def upload_file(
 
     task = celery_app.send_task(
         "speaksum.tasks.celery_tasks.process_meeting_task",
-        args=[str(meeting.id), str(file_path), speaker_identity],
+        args=[str(meeting.id), str(file_path), speaker_identity, provider],
     )
 
     return {"task_id": task.id, "meeting_id": str(meeting.id), "status": "pending"}

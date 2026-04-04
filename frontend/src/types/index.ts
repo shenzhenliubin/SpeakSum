@@ -106,6 +106,7 @@ export interface ModelConfig {
   id: string;
   provider: ModelProvider;
   name: string;
+  has_api_key: boolean;         // Whether an API key is configured (never exposed)
   base_url: string | null;      // Changed from 'baseUrl' to match backend
   default_model: string;        // Changed from 'defaultModel' to match backend
   is_default: boolean;          // Changed from 'isDefault' to match backend
@@ -113,13 +114,17 @@ export interface ModelConfig {
   created_at: string;           // Added to match backend
 }
 
-// Speaker identity types - aligned with backend (Note: identities endpoints not in OpenAPI yet)
+// Speaker identity types - aligned with backend
 export interface SpeakerIdentity {
   id: string;
-  name: string;
-  is_default: boolean;          // Changed from 'isDefault' to match backend convention
-  usage_count: number;          // Changed from 'usageCount' to match backend convention
-  created_at: string;           // Changed from 'createdAt' to match backend
+  user_id?: string;
+  display_name: string;         // Backend field
+  aliases?: string[];
+  color?: string | null;
+  avatar_url?: string | null;
+  is_default: boolean;
+  created_at: string;
+  updated_at?: string;
 }
 
 // API types - aligned with backend

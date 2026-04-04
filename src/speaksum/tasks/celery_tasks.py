@@ -10,8 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from speaksum.core.config import settings
-from speaksum.models.models import Meeting, Speech, Topic
-from speaksum.services.file_parser import parse_file
+from speaksum.models.models import Meeting, Speech, Topic, UserModelConfig
+from speaksum.services.file_parser import extract_meeting_date, extract_speeches, parse_file
 from speaksum.services.knowledge_graph_builder import KnowledgeGraphBuilder
 from speaksum.services.llm_client import get_llm_client
 from speaksum.services.text_processor import TextProcessor
@@ -39,8 +39,9 @@ def process_meeting_task(
     meeting_id: str,
     file_path: str,
     speaker_identity: str,
+    model_config: str = "kimi",
 ) -> dict[str, Any]:
-    return asyncio.run(_process_meeting_async(self, meeting_id, file_path, speaker_identity))
+    return asyncio.run(_process_meeting_async(self, meeting_id, file_path, speaker_identity, model_config))
 
 
 async def _process_meeting_async(
@@ -48,6 +49,7 @@ async def _process_meeting_async(
     meeting_id: str,
     file_path: str,
     speaker_identity: str,
+    model_config: str = "kimi",
 ) -> dict[str, Any]:
     """Process meeting with detailed state machine.
 
@@ -58,16 +60,73 @@ async def _process_meeting_async(
             # Stage 1: PARSING (0% → 10%)
             await _update_progress(self, meeting_id, "PARSING", "parsing", 10)
             text = parse_file(file_path)
+            logger.info("Parsed file %s, text length=%d", file_path, len(text))
+
+            # Extract meeting date from file content
+            meeting_date = extract_meeting_date(text)
+            if meeting_date:
+                meeting_result = await db.execute(select(Meeting).where(Meeting.id == meeting_id))
+                meeting_obj = meeting_result.scalar_one_or_none()
+                if meeting_obj and not meeting_obj.meeting_date:
+                    meeting_obj.meeting_date = meeting_date
+                    await db.commit()
+                    logger.info("Set meeting %s date to %s", meeting_id, meeting_date)
+            else:
+                logger.warning("No meeting date found in file %s", file_path)
 
             # Stage 2: EXTRACTING (10% → 40%)
             await _update_progress(self, meeting_id, "EXTRACTING", "extracting", 25)
             from speaksum.services.file_parser import extract_speeches
             raw_speeches = extract_speeches(text, speaker_identity)
+            logger.info(
+                "Extracted %d speeches for speaker '%s' from %s",
+                len(raw_speeches), speaker_identity, file_path,
+            )
             await _update_progress(self, meeting_id, "EXTRACTING", "extracting", 40)
 
+            # Handle empty speeches - mark as error
+            if not raw_speeches:
+                meeting_result = await db.execute(select(Meeting).where(Meeting.id == meeting_id))
+                failed_meeting = meeting_result.scalar_one_or_none()
+                if failed_meeting:
+                    failed_meeting.status = "error"
+                    failed_meeting.error_message = (
+                        f"未找到说话人「{speaker_identity}」的发言记录。"
+                        "请确认说话人身份是否正确，以及文件格式是否符合要求。"
+                    )
+                    await db.commit()
+                await _update_progress(self, meeting_id, "FAILED", "error", 0, error="No speeches found")
+                return {"meeting_id": meeting_id, "status": "error", "error": "No speeches found"}
+
             # Stage 3: CLEANING (40% → 70%)
-            # For MVP, use Kimi default
-            llm = get_llm_client("kimi")
+            # Look up user's model config from database to get API key
+            meeting_result = await db.execute(select(Meeting).where(Meeting.id == meeting_id))
+            meeting = meeting_result.scalar_one_or_none()
+            if not meeting:
+                logger.error("Meeting %s not found in database during CLEANING stage", meeting_id)
+                return {"meeting_id": meeting_id, "status": "error", "error": "Meeting not found"}
+            config_result = await db.execute(
+                select(UserModelConfig).where(
+                    UserModelConfig.user_id == meeting.user_id,
+                    UserModelConfig.provider == model_config,
+                    UserModelConfig.is_enabled == True,
+                ).order_by(UserModelConfig.is_default.desc())
+            )
+            user_config = config_result.scalars().first()
+            if user_config:
+                logger.info(
+                    "Using user config: provider=%s, model=%s, has_api_key=%s",
+                    model_config, user_config.default_model, bool(user_config.api_key),
+                )
+                llm = get_llm_client(
+                    provider=model_config,
+                    api_key=user_config.api_key,
+                    base_url=user_config.base_url,
+                    model=user_config.default_model,
+                )
+            else:
+                logger.warning("No user config found for provider=%s, using default", model_config)
+                llm = get_llm_client(model_config)
             processor = TextProcessor(llm)
 
             cleaned_speeches: list[Speech] = []
@@ -99,7 +158,10 @@ async def _process_meeting_async(
 
             # Update topics
             meeting_result = await db.execute(select(Meeting).where(Meeting.id == meeting_id))
-            meeting = meeting_result.scalar_one()
+            meeting = meeting_result.scalar_one_or_none()
+            if not meeting:
+                logger.error("Meeting %s not found in database during TAGGING stage", meeting_id)
+                return {"meeting_id": meeting_id, "status": "error", "error": "Meeting not found"}
             all_topics: set[str] = set()
             for speech in cleaned_speeches:
                 all_topics.update(speech.topics or [])

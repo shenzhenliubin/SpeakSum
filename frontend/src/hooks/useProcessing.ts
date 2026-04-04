@@ -1,134 +1,76 @@
+import { useMemo, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { uploadApi } from '@/services/uploadApi';
-import type { ProcessingTask, ProgressEvent } from '@/types';
-import { useEffect, useRef, useCallback, useState } from 'react';
+import type { ProgressEvent } from '@/types';
 
 const PROCESSING_KEY = 'processing';
+const STUCK_TIMEOUT_MS = 60_000; // 60s - show warning
+const ERROR_TIMEOUT_MS = 120_000; // 120s - treat as error
 
-// Poll processing task status
-export const useProcessingTask = (taskId: string | undefined) => {
-  return useQuery<ProcessingTask>({
+// Polling hook - polls every 2s until task is done, derives state from query data
+export const useProcessing = (taskId: string | undefined) => {
+  const pollingStartRef = useRef<number>(Date.now());
+  const lastProgressRef = useRef<number>(0);
+  const stuckNotifiedRef = useRef<boolean>(false);
+
+  // Reset tracking when taskId changes
+  useEffect(() => {
+    if (taskId) {
+      pollingStartRef.current = Date.now();
+      lastProgressRef.current = 0;
+      stuckNotifiedRef.current = false;
+    }
+  }, [taskId]);
+
+  const { data: pollData, isLoading } = useQuery({
     queryKey: [PROCESSING_KEY, taskId],
     queryFn: () => uploadApi.getTaskStatus(taskId!),
     refetchInterval: (query) => {
       const data = query.state.data;
-      // Stop polling when completed or failed (backend uses 'failed' not 'error')
       if (data?.status === 'completed' || data?.status === 'failed') {
         return false;
       }
-      return 2000; // Poll every 2 seconds
+      return 2000;
     },
     enabled: !!taskId,
   });
-};
 
-// SSE for real-time progress updates
-export const useProcessingSSE = (
-  taskId: string | undefined,
-  onProgress: (data: ProgressEvent) => void
-) => {
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const [isConnected, setIsConnected] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
-
-  const connect = useCallback(() => {
-    if (!taskId) return;
-
-    // Close existing connection
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
+  const progress = useMemo<ProgressEvent | null>(() => {
+    if (!pollData) return null;
+    // Track progress changes to detect stuck tasks
+    if (pollData.progress > lastProgressRef.current) {
+      lastProgressRef.current = pollData.progress;
+      pollingStartRef.current = Date.now(); // Reset timer on progress
     }
-
-    try {
-      const eventSource = uploadApi.createSSEConnection(
-        taskId,
-        (data) => {
-          onProgress(data);
-          if (data.status === 'completed' || data.status === 'failed') {
-            setIsConnected(false);
-            eventSourceRef.current?.close();
-          }
-        },
-        () => {
-          setError(new Error('SSE connection error'));
-          setIsConnected(false);
-        },
-        () => {
-          setIsConnected(false);
-        }
-      );
-
-      eventSourceRef.current = eventSource;
-      setIsConnected(true);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err : new Error('Failed to connect'));
-      setIsConnected(false);
-    }
-  }, [taskId, onProgress]);
-
-  useEffect(() => {
-    // Use setTimeout to avoid synchronous setState during render
-    const timeoutId = setTimeout(() => {
-      connect();
-    }, 0);
-
-    return () => {
-      clearTimeout(timeoutId);
-      eventSourceRef.current?.close();
+    return {
+      task_id: pollData.task_id,
+      meeting_id: pollData.meeting_id,
+      status: pollData.status,
+      progress: pollData.progress,
+      current_step: pollData.current_step,
+      error_message: pollData.error_message || undefined,
     };
-  }, [connect]);
+  }, [pollData]);
 
-  return {
-    isConnected,
-    error,
-    reconnect: connect,
-  };
-};
-
-// Combined hook for processing with fallback
-export const useProcessing = (
-  taskId: string | undefined,
-  onProgress?: (data: ProgressEvent) => void
-) => {
-  const [progress, setProgress] = useState<ProgressEvent | null>(null);
-
-  // Try SSE first
-  const { isConnected, error: sseError } = useProcessingSSE(taskId, (data) => {
-    setProgress(data);
-    onProgress?.(data);
-  });
-
-  // Fallback to polling if SSE fails
-  const { data: pollData } = useProcessingTask(
-    !isConnected && sseError ? taskId : undefined
-  );
-
-  useEffect(() => {
-    if (pollData && !isConnected) {
-      const progressData: ProgressEvent = {
-        task_id: pollData.task_id,
-        meeting_id: pollData.meeting_id,
-        status: pollData.status,
-        progress: pollData.progress,
-        current_step: pollData.current_step,
-        error_message: pollData.error_message || undefined,
-      };
-      // Use setTimeout to avoid synchronous setState during render
-      const timeoutId = setTimeout(() => {
-        setProgress(progressData);
-        onProgress?.(progressData);
-      }, 0);
-      return () => clearTimeout(timeoutId);
-    }
-  }, [pollData, isConnected, onProgress]);
+  // Detect stuck tasks
+  const elapsed = Date.now() - pollingStartRef.current;
+  const isStuck = !progress?.error_message
+    && progress?.status === 'pending'
+    && elapsed > STUCK_TIMEOUT_MS
+    && !stuckNotifiedRef.current;
+  const isTimedOut = !progress?.error_message
+    && (progress?.status === 'pending' || progress?.status === 'processing')
+    && elapsed > ERROR_TIMEOUT_MS
+    && progress.progress === lastProgressRef.current;
 
   return {
     progress,
-    isConnected,
-    isLoading: progress?.status === 'processing' || progress?.status === 'pending',
+    isLoading: isLoading || progress?.status === 'processing' || progress?.status === 'pending',
     isComplete: progress?.status === 'completed',
-    isError: progress?.status === 'failed',
-    errorMessage: progress?.error_message,
+    isError: progress?.status === 'failed' || isTimedOut,
+    isStuck,
+    errorMessage: isTimedOut
+      ? '处理超时，请检查 Celery 工作进程是否正常运行，然后重试'
+      : progress?.error_message,
   };
 };

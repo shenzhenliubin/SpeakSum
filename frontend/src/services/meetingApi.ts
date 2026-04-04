@@ -15,6 +15,7 @@ interface ListMeetingsParams {
 interface CreateMeetingRequest {
   file: File;
   speaker_identity?: string;  // Changed from 'speakerIdentity' to match backend
+  provider?: string;
 }
 
 export const meetingApi = {
@@ -34,10 +35,12 @@ export const meetingApi = {
     data: CreateMeetingRequest,
     onProgress?: (progress: number) => void
   ): Promise<{ task_id: string; meeting_id: string }> => {
-    const formData = new FormData();
-    formData.append('file', data.file);
+    const extraFields: Record<string, string> = {};
     if (data.speaker_identity) {
-      formData.append('speaker_identity', data.speaker_identity);
+      extraFields.speaker_identity = data.speaker_identity;
+    }
+    if (data.provider) {
+      extraFields.provider = data.provider;
     }
 
     // Upload returns { task_id, meeting_id, status }
@@ -45,7 +48,7 @@ export const meetingApi = {
       '/upload',
       data.file,
       onProgress,
-      data.speaker_identity ? { speaker_identity: data.speaker_identity } : undefined
+      Object.keys(extraFields).length > 0 ? extraFields : undefined
     );
   },
 
@@ -56,8 +59,12 @@ export const meetingApi = {
 
   // Get speeches for a meeting
   // GET /api/v1/meetings/{meeting_id}/speeches
-  getSpeeches: (meetingId: string): Promise<{ items: Speech[]; total: number }> =>
-    apiClient.get(`/meetings/${meetingId}/speeches`),
+  // Backend returns Speech[] directly, wrap into { items, total }
+  getSpeeches: async (meetingId: string): Promise<{ items: Speech[]; total: number }> => {
+    const data = await apiClient.get<unknown[]>(`/meetings/${meetingId}/speeches`);
+    const items = Array.isArray(data) ? data : [];
+    return { items, total: items.length };
+  },
 
   // Get speech detail
   // GET /api/v1/speeches/{speech_id}

@@ -23,6 +23,7 @@ class LoginRequest(BaseModel):
 class RegisterRequest(BaseModel):
     email: str
     password: str = Field(..., min_length=6)
+    name: str | None = None
 
 
 class TokenResponse(BaseModel):
@@ -73,6 +74,7 @@ async def register(
     # Create new user
     user = User(
         email=payload.email,
+        name=payload.name,
         password_hash=hash_password(payload.password),
     )
     db.add(user)
@@ -92,9 +94,11 @@ async def register(
 @router.get("/me")
 async def get_current_user_info(
     current_user: dict[str, Any] = Depends(get_current_user),
-) -> ApiResponse[dict[str, Any]]:
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[UserResponse]:
     """Get current authenticated user info."""
-    return ApiResponse.success_response({
-        "id": current_user.get("sub"),
-        "email": current_user.get("email"),
-    })
+    result = await db.execute(select(User).where(User.id == current_user.get("sub")))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return ApiResponse.success_response(UserResponse.model_validate(user))

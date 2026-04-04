@@ -45,7 +45,7 @@ class KimiClient(BaseLLMClient):
         model: str = "moonshot-v1-128k",
     ) -> None:
         self.api_key = api_key or settings.KIMI_API_KEY or ""
-        self.base_url = base_url or "https://api.moonshot.cn/v1"
+        self.base_url = (base_url or "https://api.moonshot.cn/v1").rstrip("/")
         self.model = model
         if not self.api_key:
             raise SpeakSumException("Kimi API key not configured", status_code=400)

@@ -58,13 +58,15 @@ export const useCreateMeeting = () => {
     mutationFn: async ({
       file,
       speaker_identity,
+      provider,
       onProgress,
     }: {
       file: File;
       speaker_identity?: string;
+      provider?: string;
       onProgress?: (progress: number) => void;
     }) => {
-      return meetingApi.create({ file, speaker_identity }, onProgress);
+      return meetingApi.create({ file, speaker_identity, provider }, onProgress);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [MEETINGS_KEY] });

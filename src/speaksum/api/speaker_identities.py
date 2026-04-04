@@ -47,10 +47,25 @@ async def create_speaker_identity(
         aliases=payload.aliases,
         color=payload.color,
         avatar_url=payload.avatar_url,
+        is_default=payload.is_default,
     )
     db.add(identity)
     await db.commit()
     await db.refresh(identity)
+
+    # Unset other defaults if this one is default
+    if payload.is_default:
+        result = await db.execute(
+            select(SpeakerIdentity).where(
+                SpeakerIdentity.user_id == user_id,
+                SpeakerIdentity.id != identity.id,
+                SpeakerIdentity.is_default == True,
+            )
+        )
+        for other in result.scalars().all():
+            other.is_default = False
+        await db.commit()
+        await db.refresh(identity)
 
     return ApiResponse.success_response(SpeakerIdentityResponse.model_validate(identity))
 
@@ -103,9 +118,24 @@ async def update_speaker_identity(
     identity.aliases = payload.aliases
     identity.color = payload.color
     identity.avatar_url = payload.avatar_url
+    identity.is_default = payload.is_default
 
     await db.commit()
     await db.refresh(identity)
+
+    # Unset other defaults if this one is default
+    if payload.is_default:
+        result = await db.execute(
+            select(SpeakerIdentity).where(
+                SpeakerIdentity.user_id == user_id,
+                SpeakerIdentity.id != identity.id,
+                SpeakerIdentity.is_default == True,
+            )
+        )
+        for other in result.scalars().all():
+            other.is_default = False
+        await db.commit()
+        await db.refresh(identity)
 
     return ApiResponse.success_response(SpeakerIdentityResponse.model_validate(identity))
 

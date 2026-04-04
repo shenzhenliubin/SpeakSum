@@ -6,7 +6,6 @@ import {
   ApartmentOutlined,
   FileTextOutlined,
   MessageOutlined,
-  TagOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useMeetings } from '@/hooks/useMeetings';
@@ -61,10 +60,6 @@ const MeetingCard: React.FC<{ meeting: Meeting; onClick: () => void }> = ({
             <MessageOutlined />
             {formatNumber(meeting.speech_count)} 条发言
           </span>
-          <span className="flex items-center gap-1">
-            <TagOutlined />
-            {meeting.participants.length} 人参与
-          </span>
         </div>
       </div>
       <div
@@ -100,7 +95,6 @@ export const Home: React.FC = () => {
   const stats = [
     { title: '会议总数', value: data?.total || 0, icon: <FileTextOutlined /> },
     { title: '我的发言', value: meetings.reduce((acc, m) => acc + m.speech_count, 0), icon: <MessageOutlined /> },
-    { title: '参与人数', value: new Set(meetings.flatMap((m) => m.participants)).size, icon: <TagOutlined /> },
   ];
 
   if (isLoading) {
@@ -125,7 +119,7 @@ export const Home: React.FC = () => {
       {hasMeetings && (
         <Row gutter={[16, 16]} className="mb-8">
           {stats.map((stat) => (
-            <Col xs={24} sm={8} key={stat.title}>
+            <Col xs={24} sm={12} key={stat.title}>
               <Card>
                 <Statistic
                   title={<span className="text-text-secondary">{stat.title}</span>}

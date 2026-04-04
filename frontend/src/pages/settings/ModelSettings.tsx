@@ -1,37 +1,46 @@
-import { useState } from 'react';
-import { Button, Card, Form, Input, Select, Switch, Tag, Space, Alert, List, Modal } from 'antd';
+import { useEffect, useState } from 'react';
+import { Button, Card, Form, Input, Select, Switch, Tag, Space, Alert, List, Modal, message } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { useModelConfigs, useUpdateModelConfigs } from '@/hooks/useModelConfigs';
+import { LoadingState } from '@/components/common/LoadingState';
 import { MODEL_PROVIDERS } from '@/utils/constants';
-import type { ModelProvider } from '@/types';
-
-interface ModelConfig {
-  id: string;
-  provider: ModelProvider;
-  name: string;
-  apiKey?: string;
-  baseUrl: string;
-  defaultModel: string;
-  isDefault: boolean;
-  isEnabled: boolean;
-}
-
-const defaultConfigs: ModelConfig[] = [
-  {
-    id: '1',
-    provider: 'kimi',
-    name: 'Kimi (默认)',
-    baseUrl: 'https://api.moonshot.cn/v1',
-    defaultModel: 'moonshot-v1-128k',
-    isDefault: true,
-    isEnabled: true,
-  },
-];
+import type { ModelConfig, ModelProvider } from '@/types';
 
 export const ModelSettings: React.FC = () => {
-  const [configs, setConfigs] = useState<ModelConfig[]>(defaultConfigs);
+  const { data: apiConfigs, isLoading } = useModelConfigs();
+  const updateMutation = useUpdateModelConfigs();
+  const [configs, setConfigs] = useState<ModelConfig[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingConfig, setEditingConfig] = useState<ModelConfig | null>(null);
   const [form] = Form.useForm();
+
+  useEffect(() => {
+    if (apiConfigs) {
+      setConfigs(apiConfigs);
+    }
+  }, [apiConfigs]);
+
+  // We need to track pending api_key separately since ModelConfig
+  // uses has_api_key (bool) instead of the plaintext key
+  const [pendingApiKey, setPendingApiKey] = useState<string | null>(null);
+
+  const persistConfigs = (newConfigs: ModelConfig[]) => {
+    setConfigs(newConfigs);
+    // Build submission payload: include api_key for the backend (ModelConfigCreate schema)
+    const submitPayload = newConfigs.map((c) => ({
+      provider: c.provider,
+      name: c.name,
+      api_key: c.id === editingConfig?.id ? pendingApiKey : undefined,
+      base_url: c.base_url,
+      default_model: c.default_model,
+      is_default: c.is_default,
+      is_enabled: c.is_enabled,
+    }));
+    updateMutation.mutate(submitPayload as unknown as ModelConfig[], {
+      onError: () => message.error('保存失败，请重试'),
+      onSettled: () => setPendingApiKey(null),
+    });
+  };
 
   const handleAdd = () => {
     setEditingConfig(null);
@@ -41,46 +50,69 @@ export const ModelSettings: React.FC = () => {
 
   const handleEdit = (config: ModelConfig) => {
     setEditingConfig(config);
-    form.setFieldsValue(config);
+    form.setFieldsValue({
+      provider: config.provider,
+      name: config.name,
+      apiKey: '',  // Never pre-fill API key for security
+      baseUrl: config.base_url || '',
+      defaultModel: config.default_model,
+      isEnabled: config.is_enabled,
+    });
     setIsModalOpen(true);
   };
 
   const handleDelete = (id: string) => {
-    setConfigs((prev) => prev.filter((c) => c.id !== id));
+    const newConfigs = configs.filter((c) => c.id !== id);
+    persistConfigs(newConfigs);
   };
 
   const handleSetDefault = (id: string) => {
-    setConfigs((prev) =>
-      prev.map((c) => ({
-        ...c,
-        isDefault: c.id === id,
-      }))
-    );
+    const newConfigs = configs.map((c) => ({
+      ...c,
+      is_default: c.id === id,
+    }));
+    persistConfigs(newConfigs);
   };
 
   const handleSave = async () => {
     const values = await form.validateFields();
 
+    const apiKey = values.apiKey || null;
+    setPendingApiKey(apiKey);
+
     if (editingConfig) {
-      setConfigs((prev) =>
-        prev.map((c) =>
-          c.id === editingConfig.id
-            ? { ...c, ...values }
-            : c
-        )
-      );
+      const updated: ModelConfig = {
+        ...editingConfig,
+        provider: values.provider,
+        name: values.name,
+        has_api_key: apiKey ? true : editingConfig.has_api_key,
+        base_url: values.baseUrl || null,
+        default_model: values.defaultModel,
+        is_enabled: values.isEnabled,
+      };
+      const newConfigs = configs.map((c) => (c.id === editingConfig.id ? updated : c));
+      persistConfigs(newConfigs);
     } else {
       const newConfig: ModelConfig = {
         id: Date.now().toString(),
-        ...values,
-        isDefault: configs.length === 0,
-        isEnabled: true,
+        provider: values.provider,
+        name: values.name,
+        has_api_key: !!apiKey,
+        base_url: values.baseUrl || null,
+        default_model: values.defaultModel,
+        is_default: configs.length === 0,
+        is_enabled: values.isEnabled,
+        created_at: new Date().toISOString(),
       };
-      setConfigs((prev) => [...prev, newConfig]);
+      persistConfigs([...configs, newConfig]);
     }
 
     setIsModalOpen(false);
   };
+
+  if (isLoading) {
+    return <LoadingState type="skeleton" rows={3} />;
+  }
 
   return (
     <div>
@@ -102,10 +134,11 @@ export const ModelSettings: React.FC = () => {
 
         <List
           dataSource={configs}
+          locale={{ emptyText: '暂无模型配置，请点击右上角添加' }}
           renderItem={(config) => (
             <List.Item
               actions={[
-                !config.isDefault && (
+                !config.is_default && (
                   <Button
                     key="default"
                     type="text"
@@ -126,7 +159,7 @@ export const ModelSettings: React.FC = () => {
                   danger
                   icon={<DeleteOutlined />}
                   onClick={() => handleDelete(config.id)}
-                  disabled={config.isDefault}
+                  disabled={config.is_default}
                 />,
               ]}
             >
@@ -134,19 +167,19 @@ export const ModelSettings: React.FC = () => {
                 title={
                   <Space>
                     <span>{config.name}</span>
-                    {config.isDefault && (
+                    {config.is_default && (
                       <Tag color="success" icon={<CheckCircleOutlined />}>
                         默认
                       </Tag>
                     )}
-                    {!config.isEnabled && <Tag>已禁用</Tag>}
+                    {!config.is_enabled && <Tag>已禁用</Tag>}
                   </Space>
                 }
                 description={
                   <div className="text-sm text-text-secondary">
                     <div>提供商: {MODEL_PROVIDERS.find((p) => p.value === config.provider)?.label}</div>
-                    <div>模型: {config.defaultModel}</div>
-                    <div>API Key: {config.apiKey ? '已配置' : '未配置'}</div>
+                    <div>模型: {config.default_model}</div>
+                    <div>API Key: {config.has_api_key ? '••••••••' : '未配置'}</div>
                   </div>
                 }
               />
@@ -190,15 +223,15 @@ export const ModelSettings: React.FC = () => {
           <Form.Item
             name="apiKey"
             label="API Key"
-            rules={[{ required: true, message: '请输入 API Key' }]}
+            rules={[{ required: !editingConfig?.has_api_key, message: '请输入 API Key' }]}
           >
-            <Input.Password placeholder="sk-..." />
+            <Input.Password placeholder={editingConfig?.has_api_key ? '••••••••（已配置，留空保持不变）' : 'sk-...'} />
           </Form.Item>
 
           <Form.Item
             name="baseUrl"
             label="Base URL"
-            rules={[{ required: true }]}
+            rules={[{ required: true, message: '请输入 Base URL' }]}
           >
             <Input placeholder="https://api.example.com/v1" />
           </Form.Item>
@@ -206,7 +239,7 @@ export const ModelSettings: React.FC = () => {
           <Form.Item
             name="defaultModel"
             label="默认模型"
-            rules={[{ required: true }]}
+            rules={[{ required: true, message: '请输入默认模型' }]}
           >
             <Input placeholder="例如：gpt-4-turbo" />
           </Form.Item>

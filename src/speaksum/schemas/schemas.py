@@ -11,6 +11,7 @@ class UserResponse(BaseModel):
 
     id: str
     email: str
+    name: str | None = None
     created_at: datetime
 
 
@@ -33,6 +34,7 @@ class MeetingResponse(BaseModel):
     file_size: int
     status: str
     error_message: str | None = None
+    speech_count: int = 0
     created_at: datetime
     updated_at: datetime
     speeches: list["SpeechResponse"] | None = None
@@ -40,6 +42,9 @@ class MeetingResponse(BaseModel):
 
 class MeetingList(BaseModel):
     total: int
+    page: int
+    page_size: int
+    total_pages: int
     items: list[MeetingResponse]
 
 
@@ -163,6 +168,7 @@ class ModelConfigResponse(BaseModel):
     user_id: str
     provider: str
     name: str
+    has_api_key: bool = False
     base_url: str | None
     default_model: str
     is_default: bool
@@ -177,6 +183,7 @@ class SpeakerIdentityCreate(BaseModel):
     aliases: list[str] = Field(default_factory=list)
     color: str | None = Field(None, pattern=r"^#[0-9A-Fa-f]{6}$")
     avatar_url: str | None = Field(None, max_length=500)
+    is_default: bool = False
 
 
 class SpeakerIdentityResponse(BaseModel):
@@ -188,6 +195,7 @@ class SpeakerIdentityResponse(BaseModel):
     aliases: list[str] | None
     color: str | None
     avatar_url: str | None
+    is_default: bool
     created_at: datetime
     updated_at: datetime
 

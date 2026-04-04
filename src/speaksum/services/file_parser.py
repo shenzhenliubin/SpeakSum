@@ -2,6 +2,7 @@
 
 import re
 import subprocess
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -126,17 +127,28 @@ def parse_file(file_path: str) -> str:
     raise SpeakSumException(f"Unsupported file format: {ext}", status_code=400)
 
 
-SPEECH_PATTERN = re.compile(r"\[(\d{1,2}:\d{2}(:\d{2})?)\]\s*([^：:]+)[：:]\s*(.*)")
+# Format 1: [HH:MM:SS] 说话人：内容
+SPEECH_PATTERN_BRACKET = re.compile(r"\[(\d{1,2}:\d{2}(:\d{2})?)\]\s*([^：:]+)[：:]\s*(.*)")
+# Format 2: 说话人 HH:MM:SS\n内容 (content on same or next line)
+SPEECH_PATTERN_INLINE = re.compile(r"^(\S+)\s+(\d{1,2}:\d{2}(:\d{2})?)\s*$")
 
 
 def extract_speeches(text: str, target_speaker: str) -> list[dict[str, Any]]:
-    """Extract speeches from transcript text matching target speaker."""
+    """Extract speeches from transcript text matching target speaker.
+
+    Supports two transcript formats:
+    - [HH:MM:SS] Speaker：content
+    - Speaker HH:MM:SS  (content follows on next lines until next speaker line)
+    """
     speeches = []
-    for line in text.splitlines():
+    lines = text.splitlines()
+
+    # First try bracket format
+    for line in lines:
         line = line.strip()
         if not line:
             continue
-        match = SPEECH_PATTERN.match(line)
+        match = SPEECH_PATTERN_BRACKET.match(line)
         if not match:
             continue
         timestamp = match.group(1)
@@ -150,4 +162,63 @@ def extract_speeches(text: str, target_speaker: str) -> list[dict[str, Any]]:
             "raw_text": content,
             "word_count": len(content),
         })
+
+    # If bracket format found nothing, try inline format
+    if not speeches:
+        current_speaker: str | None = None
+        current_timestamp: str | None = None
+        current_lines: list[str] = []
+
+        def _flush() -> None:
+            nonlocal current_speaker, current_timestamp, current_lines
+            if current_speaker and current_timestamp and current_lines:
+                content = " ".join(current_lines).strip()
+                if current_speaker == target_speaker and content:
+                    speeches.append({
+                        "timestamp": current_timestamp,
+                        "speaker": current_speaker,
+                        "raw_text": content,
+                        "word_count": len(content),
+                    })
+            current_speaker = None
+            current_timestamp = None
+            current_lines = []
+
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            match = SPEECH_PATTERN_INLINE.match(stripped)
+            if match:
+                _flush()
+                current_speaker = match.group(1).strip()
+                current_timestamp = match.group(2)
+                current_lines = []
+            elif current_speaker:
+                current_lines.append(stripped)
+        _flush()
+
     return speeches
+
+
+# Date extraction patterns from transcript content
+DATE_PATTERNS = [
+    re.compile(r"创建时间[：:]\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2})"),
+    re.compile(r"(\d{4}[-/]\d{1,2}[-/]\d{1,2})\s*\d{1,2}:\d{2}"),
+    re.compile(r"日期[：:]\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2})"),
+]
+
+
+def extract_meeting_date(text: str) -> date | None:
+    """Extract meeting date from transcript content."""
+    from datetime import datetime as dt
+
+    for pattern in DATE_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            date_str = match.group(1).replace("/", "-")
+            try:
+                return dt.strptime(date_str, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+    return None

@@ -103,7 +103,8 @@ export function truncateText(text: string, maxLength: number): string {
 /**
  * Format number with locale
  */
-export function formatNumber(num: number): string {
+export function formatNumber(num: number | undefined | null): string {
+  if (num == null) return '0';
   return num.toLocaleString('zh-CN');
 }
 

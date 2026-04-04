@@ -64,6 +64,52 @@ const generateTopic = (): Topic => {
 const taskProgressMap = new Map<string, number>();
 
 export const handlers = [
+  // ========== Auth ==========
+  // POST /api/v1/auth/login
+  http.post('/api/v1/auth/login', async ({ request }) => {
+    const body = await request.json() as { email: string; password: string };
+    return HttpResponse.json({
+      user: {
+        id: `user_${faker.string.alphanumeric(8)}`,
+        email: body.email,
+        name: '测试用户',
+        createdAt: faker.date.recent().toISOString(),
+      },
+      token: `mock-token-${faker.string.alphanumeric(16)}`,
+    });
+  }),
+
+  // POST /api/v1/auth/register
+  http.post('/api/v1/auth/register', async ({ request }) => {
+    const body = await request.json() as { email: string; password: string; name: string };
+    return HttpResponse.json({
+      user: {
+        id: `user_${faker.string.alphanumeric(8)}`,
+        email: body.email,
+        name: body.name,
+        createdAt: faker.date.recent().toISOString(),
+      },
+      token: `mock-token-${faker.string.alphanumeric(16)}`,
+    });
+  }),
+
+  // GET /api/v1/auth/me
+  http.get('/api/v1/auth/me', () => {
+    return HttpResponse.json({
+      id: `user_${faker.string.alphanumeric(8)}`,
+      email: 'test@example.com',
+      name: '测试用户',
+      createdAt: faker.date.recent().toISOString(),
+    });
+  }),
+
+  // POST /api/v1/auth/refresh
+  http.post('/api/v1/auth/refresh', () => {
+    return HttpResponse.json({
+      token: `mock-refreshed-token-${faker.string.alphanumeric(16)}`,
+    });
+  }),
+
   // ========== Upload ==========
   // POST /api/v1/upload
   http.post('/api/v1/upload', async () => {
@@ -291,6 +337,7 @@ export const handlers = [
         id: 'cfg_openai',
         provider: 'openai',
         name: 'OpenAI GPT-4',
+        has_api_key: true,
         base_url: 'https://api.openai.com/v1',
         default_model: 'gpt-4',
         is_default: true,
@@ -301,6 +348,7 @@ export const handlers = [
         id: 'cfg_kimi',
         provider: 'kimi',
         name: 'Kimi Moonshot',
+        has_api_key: false,
         base_url: null,
         default_model: 'moonshot-v1',
         is_default: false,

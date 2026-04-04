@@ -65,7 +65,7 @@ class TestAuthAPI:
         })
         assert response.status_code == 422  # Validation error
 
-    def test_get_current_user(self, authorized_client: TestClient) -> None:
+    def test_get_current_user(self, authorized_client: TestClient, test_user) -> None:
         """Test getting current user info."""
         response = authorized_client.get("/api/v1/auth/me")
         assert response.status_code == 200

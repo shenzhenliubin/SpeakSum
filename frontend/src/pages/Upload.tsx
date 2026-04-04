@@ -1,10 +1,11 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Button, Card, Form, Select, Space, Alert, List } from 'antd';
 import { InboxOutlined, FileTextOutlined, DeleteOutlined, CloudUploadOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useDropzone } from 'react-dropzone';
 import { useCreateMeeting } from '@/hooks/useMeetings';
-import { useUIStore } from '@/stores/uiStore';
+import { useSpeakerIdentities } from '@/hooks/useSpeakerIdentities';
+import { useModelConfigs } from '@/hooks/useModelConfigs';
 import { MAX_FILE_SIZE } from '@/utils/constants';
 import { formatFileSize } from '@/utils/formatters';
 const { Option } = Select;
@@ -15,27 +16,47 @@ interface FileWithPreview extends File {
 
 export const Upload: React.FC = () => {
   const navigate = useNavigate();
-  const { addNotification } = useUIStore();
   const [form] = Form.useForm();
   const [files, setFiles] = useState<FileWithPreview[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const createMeeting = useCreateMeeting();
+  const { data: identities, isLoading: isIdentitiesLoading } = useSpeakerIdentities();
+  const { data: configs, isLoading: isConfigsLoading } = useModelConfigs();
+
+  // Auto-fill defaults when settings data loads
+  useEffect(() => {
+    if (identities && identities.length > 0) {
+      const defaultIdentity = identities.find((i) => i.is_default)?.display_name || identities[0].display_name;
+      const currentIdentity = form.getFieldValue('speakerIdentity');
+      if (!currentIdentity) {
+        form.setFieldValue('speakerIdentity', defaultIdentity);
+      }
+    }
+    if (configs && configs.length > 0) {
+      const defaultProvider = configs.find((c) => c.is_default)?.provider || configs[0].provider;
+      const currentModel = form.getFieldValue('modelConfig');
+      if (!currentModel) {
+        form.setFieldValue('modelConfig', defaultProvider);
+      }
+    }
+  }, [identities, configs, form]);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
+    setUploadError(null);
     const validFiles = acceptedFiles.filter((file) => {
       if (file.size > MAX_FILE_SIZE) {
-        addNotification({
-          type: 'error',
-          message: `${file.name} 超过 ${formatFileSize(MAX_FILE_SIZE)} 限制`,
-        });
+        setUploadError(`${file.name} 超过 ${formatFileSize(MAX_FILE_SIZE)} 限制`);
         return false;
       }
       return true;
     });
 
-    setFiles((prev) => [...prev, ...validFiles]);
-  }, [addNotification]);
+    if (validFiles.length > 0) {
+      setFiles((prev) => [...prev, ...validFiles]);
+    }
+  }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -51,18 +72,34 @@ export const Upload: React.FC = () => {
 
   const removeFile = (index: number) => {
     setFiles((prev) => prev.filter((_, i) => i !== index));
+    setUploadError(null);
+  };
+
+  const getErrorMessage = (error: unknown): string => {
+    if (typeof error === 'object' && error !== null) {
+      const err = error as Record<string, any>;
+      if (err.response?.data?.detail) return String(err.response.data.detail);
+      if (err.response?.data?.message) return String(err.response.data.message);
+      if (err.message) return String(err.message);
+    }
+    return '上传失败，请重试';
   };
 
   const handleUpload = async () => {
+    setUploadError(null);
+
     if (files.length === 0) {
-      addNotification({
-        type: 'warning',
-        message: '请选择要上传的文件',
-      });
+      setUploadError('请选择要上传的文件');
       return;
     }
 
-    const values = form.getFieldsValue();
+    let values: { speakerIdentity: string; modelConfig: string };
+    try {
+      values = await form.validateFields();
+    } catch {
+      // Form validation error already shown under fields
+      return;
+    }
 
     try {
       setUploading(true);
@@ -72,6 +109,7 @@ export const Upload: React.FC = () => {
         const result = await createMeeting.mutateAsync({
           file,
           speaker_identity: values.speakerIdentity,
+          provider: values.modelConfig,
         });
 
         // Navigate to progress page for the last file
@@ -80,16 +118,8 @@ export const Upload: React.FC = () => {
           navigate(`/upload/progress/${resultWithTask.task_id}`);
         }
       }
-
-      addNotification({
-        type: 'success',
-        message: '文件上传成功，开始处理',
-      });
-    } catch {
-      addNotification({
-        type: 'error',
-        message: '上传失败，请重试',
-      });
+    } catch (error) {
+      setUploadError(getErrorMessage(error));
     } finally {
       setUploading(false);
     }
@@ -162,31 +192,32 @@ export const Upload: React.FC = () => {
             <Form.Item
               name="speakerIdentity"
               label="说话人身份"
-              rules={[{ required: true, message: '请选择或输入说话人身份' }]}
+              rules={[{ required: true, message: '请选择说话人身份' }]}
             >
               <Select
-                placeholder="选择或输入你的身份标识"
+                placeholder="选择你的身份标识"
                 allowClear
                 showSearch
-                options={[
-                  { value: '我', label: '我（默认）' },
-                  { value: '产品经理', label: '产品经理' },
-                  { value: '技术负责人', label: '技术负责人' },
-                  { value: '项目经理', label: '项目经理' },
-                ]}
+                loading={isIdentitiesLoading}
+                options={identities?.map((i) => ({ value: i.display_name, label: i.display_name })) || []}
               />
             </Form.Item>
 
             <Form.Item
               name="modelConfig"
               label="AI 模型"
+              rules={[{ required: true, message: '请选择 AI 模型' }]}
             >
-              <Select placeholder="选择要使用的 AI 模型（默认使用系统设置）">
-                <Option value="default">使用默认模型</Option>
-                <Option value="kimi">Kimi</Option>
-                <Option value="openai">OpenAI</Option>
-                <Option value="claude">Claude</Option>
-              </Select>
+              <Select
+                placeholder="选择要使用的 AI 模型"
+                loading={isConfigsLoading}
+                options={[
+                  { value: 'default', label: '使用默认模型' },
+                  { value: 'kimi', label: 'Kimi' },
+                  { value: 'openai', label: 'OpenAI' },
+                  { value: 'claude', label: 'Claude' },
+                ]}
+              />
             </Form.Item>
 
             <Alert
@@ -196,6 +227,17 @@ export const Upload: React.FC = () => {
               showIcon
               className="mb-4"
             />
+
+            {uploadError && (
+              <Alert
+                message={uploadError}
+                type="error"
+                showIcon
+                closable
+                onClose={() => setUploadError(null)}
+                className="mb-4"
+              />
+            )}
 
             <Form.Item>
               <Space>
@@ -208,7 +250,7 @@ export const Upload: React.FC = () => {
                 >
                   开始上传并处理
                 </Button>
-                <Button size="large" onClick={() => setFiles([])}>
+                <Button size="large" onClick={() => { setFiles([]); setUploadError(null); }}>
                   取消
                 </Button>
               </Space>

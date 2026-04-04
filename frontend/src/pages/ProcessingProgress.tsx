@@ -29,12 +29,7 @@ export const ProcessingProgress: React.FC = () => {
   const navigate = useNavigate();
   const [elapsedTime, setElapsedTime] = useState(0);
 
-  const { progress, isLoading, isComplete, isError, errorMessage } = useProcessing(
-    taskId,
-    (data) => {
-      console.log('Progress update:', data);
-    }
-  );
+  const { progress, isLoading, isComplete, isError, isStuck, errorMessage } = useProcessing(taskId);
 
   // Timer for elapsed time
   useEffect(() => {
@@ -143,6 +138,22 @@ export const ProcessingProgress: React.FC = () => {
             description: stageDescriptions[stage],
           }))}
         />
+
+        {/* Stuck Warning */}
+        {isStuck && (
+          <Alert
+            message="处理时间较长"
+            description="任务处理时间超过预期。请确认 Celery 工作进程是否正常运行。"
+            type="warning"
+            showIcon
+            className="mt-4"
+            action={
+              <Button size="small" onClick={() => window.location.reload()}>
+                刷新
+              </Button>
+            }
+          />
+        )}
 
         {/* Status Alert */}
         <Alert

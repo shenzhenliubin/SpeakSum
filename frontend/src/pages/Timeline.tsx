@@ -1,9 +1,8 @@
-import { useState, useEffect } from 'react';
-import { Input, DatePicker, Select, Button, Card, Tag, Space, Pagination } from 'antd';
-import { SearchOutlined, CalendarOutlined, ExportOutlined } from '@ant-design/icons';
+import { useState } from 'react';
+import { Input, DatePicker, Select, Button, Card, Tag, Space, Pagination, Modal, message } from 'antd';
+import { SearchOutlined, CalendarOutlined, ExportOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { useMeetings } from '@/hooks/useMeetings';
-import { useMeetingStore } from '@/stores/meetingStore';
+import { useMeetings, useDeleteMeeting } from '@/hooks/useMeetings';
 import { useDebouncedValue } from '@/hooks/useDebounce';
 import { EmptyState } from '@/components/common/EmptyState';
 import { LoadingState } from '@/components/common/LoadingState';
@@ -19,31 +18,6 @@ const statusColors: Record<MeetingStatus, string> = {
   error: 'error',
 };
 
-const MeetingCard: React.FC<{ meeting: Meeting; onClick: () => void }> = ({ meeting, onClick }) => (
-  <Card hoverable onClick={onClick} className="cursor-pointer transition-all hover:shadow-float">
-    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-3 mb-2">
-          <h3 className="font-semibold text-text-primary text-lg">{meeting.title}</h3>
-          <Tag color={statusColors[meeting.status]}>{formatStatus(meeting.status)}</Tag>
-        </div>
-        <p className="text-text-secondary text-sm mb-2">
-          <CalendarOutlined className="mr-1" />
-          {formatDate(meeting.meeting_date)} · {formatRelativeTime(meeting.meeting_date)}
-        </p>
-        <div className="flex items-center gap-4 text-sm text-text-tertiary">
-          <span>{formatNumber(meeting.speech_count)} 条发言</span>
-          <span>·</span>
-          <span>{meeting.participants.length} 位参与者</span>
-        </div>
-      </div>
-      <div className="flex items-center gap-2">
-        <Button type="primary" ghost>查看详情</Button>
-      </div>
-    </div>
-  </Card>
-);
-
 export const Timeline: React.FC = () => {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
@@ -51,6 +25,10 @@ export const Timeline: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<MeetingStatus | undefined>();
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
+  const deleteMutation = useDeleteMeeting();
+
+  // Delete confirmation state
+  const [deleteTarget, setDeleteTarget] = useState<Meeting | null>(null);
 
   const debouncedSearch = useDebouncedValue(searchQuery, 300);
 
@@ -65,15 +43,20 @@ export const Timeline: React.FC = () => {
     page_size: pageSize,
   });
 
-  const { setMeetings, meetings } = useMeetingStore();
-
-  useEffect(() => {
-    if (data?.items) {
-      setMeetings(data.items);
-    }
-  }, [data, setMeetings]);
+  const meetings = data?.items ?? [];
 
   const hasActiveFilters = searchQuery || dateRange || statusFilter;
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      await deleteMutation.mutateAsync(deleteTarget.id);
+      message.success('删除成功');
+      setDeleteTarget(null);
+    } catch {
+      message.error('删除失败，请重试');
+    }
+  };
 
   if (isLoading) {
     return <LoadingState type="skeleton" rows={5} />;
@@ -165,11 +148,37 @@ export const Timeline: React.FC = () => {
         <>
           <div className="space-y-4">
             {meetings.map((meeting) => (
-              <MeetingCard
+              <Card
                 key={meeting.id}
-                meeting={meeting}
+                hoverable
+                className="cursor-pointer transition-all hover:shadow-float"
                 onClick={() => navigate(`/timeline/${meeting.id}`)}
-              />
+              >
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-3 mb-2">
+                      <h3 className="font-semibold text-text-primary text-lg">{meeting.title}</h3>
+                      <Tag color={statusColors[meeting.status]}>{formatStatus(meeting.status)}</Tag>
+                    </div>
+                    <p className="text-text-secondary text-sm mb-2">
+                      <CalendarOutlined className="mr-1" />
+                      {formatDate(meeting.meeting_date)} · {formatRelativeTime(meeting.meeting_date)}
+                    </p>
+                    <div className="flex items-center gap-4 text-sm text-text-tertiary">
+                      <span>{formatNumber(meeting.speech_count)} 条发言</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                    <Button
+                      danger
+                      icon={<DeleteOutlined />}
+                      onClick={() => setDeleteTarget(meeting)}
+                    >
+                      删除
+                    </Button>
+                  </div>
+                </div>
+              </Card>
             ))}
           </div>
           {data && data.total_pages > 1 && (
@@ -185,6 +194,20 @@ export const Timeline: React.FC = () => {
           )}
         </>
       )}
+
+      {/* Delete Confirmation Modal */}
+      <Modal
+        open={!!deleteTarget}
+        title="确认删除"
+        okText="删除"
+        okType="danger"
+        cancelText="取消"
+        onOk={handleDelete}
+        onCancel={() => setDeleteTarget(null)}
+        confirmLoading={deleteMutation.isPending}
+      >
+        <p>确定要删除会议「{deleteTarget?.title}」吗？此操作不可恢复。</p>
+      </Modal>
     </div>
   );
 };
