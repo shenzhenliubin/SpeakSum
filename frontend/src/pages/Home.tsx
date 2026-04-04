@@ -112,11 +112,11 @@ export const Home: React.FC = () => {
   return (
     <div className="max-w-6xl mx-auto">
       {/* Welcome Section */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-display text-text-primary mb-2">
+      <div className="mb-6">
+        <h1 className="text-2xl font-display text-text-primary mb-1">
           欢迎来到 SpeakSum
         </h1>
-        <p className="text-text-secondary">
+        <p className="text-text-secondary text-sm">
           智能分析会议记录，构建你的个人知识图谱
         </p>
       </div>

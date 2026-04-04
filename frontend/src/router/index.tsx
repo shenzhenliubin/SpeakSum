@@ -2,7 +2,7 @@ import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { RootLayout } from '@/components/layout/RootLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 
-// Direct imports for debugging
+// Direct imports
 import Home from '@/pages/Home';
 import Timeline from '@/pages/Timeline';
 import MeetingDetail from '@/pages/MeetingDetail';
@@ -15,7 +15,6 @@ import IdentitySettings from '@/pages/settings/IdentitySettings';
 import GeneralSettings from '@/pages/settings/GeneralSettings';
 import Login from '@/pages/Login';
 import NotFound from '@/pages/NotFound';
-import TestPage from '@/pages/TestPage';
 
 export const router = createBrowserRouter([
   {
@@ -34,11 +33,7 @@ export const router = createBrowserRouter([
         children: [
           {
             index: true,
-            element: <TestPage />,
-          },
-          {
-            path: 'test',
-            element: <TestPage />,
+            element: <Home />,
           },
           {
             path: 'timeline',

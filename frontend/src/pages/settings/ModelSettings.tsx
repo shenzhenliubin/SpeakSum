@@ -162,6 +162,7 @@ export const ModelSettings: React.FC = () => {
         onCancel={() => setIsModalOpen(false)}
         okText="保存"
         cancelText="取消"
+        centered
       >
         <Form form={form} layout="vertical" className="mt-4">
           <Form.Item
