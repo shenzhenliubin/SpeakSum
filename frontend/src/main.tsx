@@ -28,7 +28,19 @@ async function enableMocking() {
   })
 }
 
-enableMocking().then(() => {
+// MVP: Auto-login with test token for demo
+async function setupTestAuth() {
+  if (import.meta.env.VITE_USE_MOCK === 'true') {
+    const { useAuthStore } = await import('./stores/authStore')
+    const store = useAuthStore.getState()
+    if (!store.isAuthenticated) {
+      store.setTestToken('test-token-for-mvp-demo')
+    }
+  }
+}
+
+enableMocking().then(async () => {
+  await setupTestAuth()
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>

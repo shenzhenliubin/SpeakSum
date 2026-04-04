@@ -1,15 +1,40 @@
-// Lazy load pages for better performance
-import { lazy } from 'react';
+// Direct imports for testing (not lazy)
+// Revert to lazy loading after debugging
 
-export const Home = lazy(() => import('@/pages/Home').then((m) => ({ default: m.Home })));
-export const Timeline = lazy(() => import('@/pages/Timeline').then((m) => ({ default: m.Timeline })));
-export const MeetingDetail = lazy(() => import('@/pages/MeetingDetail').then((m) => ({ default: m.MeetingDetail })));
-export const KnowledgeGraph = lazy(() => import('@/pages/KnowledgeGraph').then((m) => ({ default: m.KnowledgeGraph })));
-export const Upload = lazy(() => import('@/pages/Upload').then((m) => ({ default: m.Upload })));
-export const ProcessingProgress = lazy(() => import('@/pages/ProcessingProgress').then((m) => ({ default: m.ProcessingProgress })));
-export const Settings = lazy(() => import('@/pages/Settings').then((m) => ({ default: m.Settings })));
-export const ModelSettings = lazy(() => import('@/pages/settings/ModelSettings').then((m) => ({ default: m.ModelSettings })));
-export const IdentitySettings = lazy(() => import('@/pages/settings/IdentitySettings').then((m) => ({ default: m.IdentitySettings })));
-export const GeneralSettings = lazy(() => import('@/pages/settings/GeneralSettings').then((m) => ({ default: m.GeneralSettings })));
-export const Login = lazy(() => import('@/pages/Login').then((m) => ({ default: m.Login })));
-export const NotFound = lazy(() => import('@/pages/NotFound').then((m) => ({ default: m.NotFound })));
+// @ts-ignore
+import HomeComp from '@/pages/Home';
+// @ts-ignore
+import TimelineComp from '@/pages/Timeline';
+// @ts-ignore
+import MeetingDetailComp from '@/pages/MeetingDetail';
+// @ts-ignore
+import KnowledgeGraphComp from '@/pages/KnowledgeGraph';
+// @ts-ignore
+import UploadComp from '@/pages/Upload';
+// @ts-ignore
+import ProcessingProgressComp from '@/pages/ProcessingProgress';
+// @ts-ignore
+import SettingsComp from '@/pages/Settings';
+// @ts-ignore
+import ModelSettingsComp from '@/pages/settings/ModelSettings';
+// @ts-ignore
+import IdentitySettingsComp from '@/pages/settings/IdentitySettings';
+// @ts-ignore
+import GeneralSettingsComp from '@/pages/settings/GeneralSettings';
+// @ts-ignore
+import LoginComp from '@/pages/Login';
+// @ts-ignore
+import NotFoundComp from '@/pages/NotFound';
+
+export const Home = HomeComp;
+export const Timeline = TimelineComp;
+export const MeetingDetail = MeetingDetailComp;
+export const KnowledgeGraph = KnowledgeGraphComp;
+export const Upload = UploadComp;
+export const ProcessingProgress = ProcessingProgressComp;
+export const Settings = SettingsComp;
+export const ModelSettings = ModelSettingsComp;
+export const IdentitySettings = IdentitySettingsComp;
+export const GeneralSettings = GeneralSettingsComp;
+export const Login = LoginComp;
+export const NotFound = NotFoundComp;

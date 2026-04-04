@@ -1,20 +1,20 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { RootLayout } from '@/components/layout/RootLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
-import {
-  Home,
-  Timeline,
-  MeetingDetail,
-  KnowledgeGraph,
-  Upload,
-  ProcessingProgress,
-  Settings,
-  ModelSettings,
-  IdentitySettings,
-  GeneralSettings,
-  Login,
-  NotFound,
-} from './lazyComponents';
+
+// Direct imports
+import Home from '@/pages/Home';
+import Timeline from '@/pages/Timeline';
+import MeetingDetail from '@/pages/MeetingDetail';
+import KnowledgeGraph from '@/pages/KnowledgeGraph';
+import Upload from '@/pages/Upload';
+import ProcessingProgress from '@/pages/ProcessingProgress';
+import Settings from '@/pages/Settings';
+import ModelSettings from '@/pages/settings/ModelSettings';
+import IdentitySettings from '@/pages/settings/IdentitySettings';
+import GeneralSettings from '@/pages/settings/GeneralSettings';
+import Login from '@/pages/Login';
+import NotFound from '@/pages/NotFound';
 
 export const router = createBrowserRouter([
   {

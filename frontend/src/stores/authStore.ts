@@ -105,6 +105,7 @@ export const useAuthStore = create<AuthState>()(
             set((state) => {
               state.token = token;
               state.isAuthenticated = true;
+              state.isLoading = false;
               // Create a mock user for MVP
               state.user = {
                 id: 'test-user',
