@@ -12,6 +12,7 @@ from speaksum.services.llm_client import (
     OllamaClient,
     OpenAIClient,
     ClaudeClient,
+    SiliconFlowClient,
     get_llm_client,
     _default_count_tokens,
 )
@@ -47,6 +48,42 @@ async def test_kimi_embed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_kimi_generate_translates_unauthorized_error() -> None:
+    with patch("speaksum.services.llm_client.settings") as mock_settings:
+        mock_settings.KIMI_API_KEY = "fake-key"
+
+        with respx.mock:
+            respx.post("https://api.moonshot.cn/v1/chat/completions").mock(
+                return_value=Response(401, json={"error": {"message": "invalid api key"}})
+            )
+            client = KimiClient()
+
+            with pytest.raises(SpeakSumException) as exc_info:
+                await client.generate([{"role": "user", "content": "hello"}])
+
+    assert exc_info.value.status_code == 401
+    assert "API Key" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_kimi_generate_translates_not_found_error() -> None:
+    with patch("speaksum.services.llm_client.settings") as mock_settings:
+        mock_settings.KIMI_API_KEY = "fake-key"
+
+        with respx.mock:
+            respx.post("https://api.moonshot.cn/v1/chat/completions").mock(
+                return_value=Response(404, json={"error": {"message": "not found"}})
+            )
+            client = KimiClient()
+
+            with pytest.raises(SpeakSumException) as exc_info:
+                await client.generate([{"role": "user", "content": "hello"}])
+
+    assert exc_info.value.status_code == 404
+    assert "Base URL" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
 async def test_kimi_client_no_api_key() -> None:
     with patch("speaksum.services.llm_client.settings") as mock_settings:
         mock_settings.KIMI_API_KEY = None
@@ -60,6 +97,22 @@ def test_get_llm_client_kimi() -> None:
         mock_settings.KIMI_API_KEY = "fake-key"
         client = get_llm_client("kimi")
         assert isinstance(client, KimiClient)
+
+
+def test_get_llm_client_kimi_ignores_custom_base_url() -> None:
+    with patch("speaksum.services.llm_client.settings") as mock_settings:
+        mock_settings.KIMI_API_KEY = "fake-key"
+        client = get_llm_client("kimi", base_url="https://api.kimi.com/coding/")
+        assert isinstance(client, KimiClient)
+        assert client.base_url == "https://api.moonshot.cn/v1"
+
+
+def test_get_llm_client_siliconflow_ignores_custom_base_url() -> None:
+    with patch("speaksum.services.llm_client.settings") as mock_settings:
+        mock_settings.SILICONFLOW_API_KEY = "fake-key"
+        client = get_llm_client("siliconflow", base_url="https://api.example.com/v1")
+        assert isinstance(client, SiliconFlowClient)
+        assert client.base_url == "https://api.siliconflow.cn/v1"
 
 
 def test_get_llm_client_openai() -> None:

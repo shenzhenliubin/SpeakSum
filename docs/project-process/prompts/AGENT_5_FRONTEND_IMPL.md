@@ -1,4 +1,15 @@
-## Agent 5 (Apollo) 任务：前端实现
+## Agent 5 (Apollo) 任务：前端实现（历史归档）
+
+> 归档说明
+>
+> 本提示词服务于旧的前端实现阶段，默认接口和页面语义仍是 `meetings / speeches / knowledge-graph topics`，不适用于当前系统。
+>
+> 当前有效设计和接口请以以下文档为准：
+> - `docs/PRODUCT_DESIGN.md`
+> - `docs/FRONTEND_DESIGN.md`
+> - `docs/openapi.yaml`
+>
+> 下文保留为历史实施过程记录。
 
 **你的身份**: 前端工程师
 **工作目录**: `~/claudcode-project/SpeakSum-wt/feature-frontend-impl`

@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import speaksum.models.models as app_models
 from speaksum.models.models import GraphLayout, Meeting, SpeakerIdentity, Speech, Topic, User, UserModelConfig
 
 
@@ -197,3 +198,53 @@ async def test_meeting_error_message(db_session: AsyncSession, test_user: User) 
 
     assert meeting.status == "failed"
     assert meeting.error_message == "Processing failed: LLM API timeout"
+
+
+@pytest.mark.asyncio
+async def test_meeting_supports_viewpoint_fields(db_session: AsyncSession, test_user: User) -> None:
+    meeting = Meeting(
+        user_id=test_user.id,
+        title="观点会议",
+        source_file="viewpoints.txt",
+        status="ignored",
+        context_summary="这是一场关于数字化转型优先级的讨论。",
+        key_quotes=["先明确目标，再投入资源。"],
+        ignored_reason="未检测到该发言人，因此未生成记录",
+    )
+    db_session.add(meeting)
+    await db_session.commit()
+    await db_session.refresh(meeting)
+
+    assert meeting.status == "ignored"
+    assert meeting.context_summary == "这是一场关于数字化转型优先级的讨论。"
+    assert meeting.key_quotes == ["先明确目标，再投入资源。"]
+    assert meeting.ignored_reason == "未检测到该发言人，因此未生成记录"
+
+
+@pytest.mark.asyncio
+async def test_viewpoint_model_belongs_to_meeting(db_session: AsyncSession, test_user: User) -> None:
+    viewpoint_cls = getattr(app_models, "Viewpoint", None)
+    assert viewpoint_cls is not None
+
+    meeting = Meeting(user_id=test_user.id, title="观点会议", source_file="viewpoints.txt")
+    db_session.add(meeting)
+    await db_session.commit()
+    await db_session.refresh(meeting)
+
+    viewpoint = viewpoint_cls(
+        meeting_id=meeting.id,
+        user_id=test_user.id,
+        sequence_number=1,
+        content="在预算受限时应优先推进高收益数字化项目。",
+        topics=["数字化", "预算"],
+        confidence="high",
+    )
+    db_session.add(viewpoint)
+    await db_session.commit()
+
+    result = await db_session.execute(
+        select(viewpoint_cls).where(viewpoint_cls.meeting_id == meeting.id)
+    )
+    fetched = result.scalar_one()
+    assert fetched.content == "在预算受限时应优先推进高收益数字化项目。"
+    assert fetched.topics == ["数字化", "预算"]

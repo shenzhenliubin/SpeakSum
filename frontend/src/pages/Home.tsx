@@ -1,19 +1,26 @@
-import { useEffect } from 'react';
 import { Button, Card, Statistic, Row, Col } from 'antd';
 import {
   UploadOutlined,
   ClockCircleOutlined,
   ApartmentOutlined,
   FileTextOutlined,
-  MessageOutlined,
+  BulbOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { useMeetings } from '@/hooks/useMeetings';
-import { useMeetingStore } from '@/stores/meetingStore';
+
+import { useContents } from '@/hooks/useContents';
 import { EmptyState } from '@/components/common/EmptyState';
 import { LoadingState } from '@/components/common/LoadingState';
-import { formatNumber, formatRelativeTime } from '@/utils/formatters';
-import type { Meeting } from '@/types';
+import { PageHeader } from '@/components/common/PageHeader';
+import {
+  formatNumber,
+  formatRelativeTime,
+  formatSourceType,
+  getContentPrimaryCount,
+  getContentPrimaryLabel,
+  truncateText,
+} from '@/utils/formatters';
+import type { Content } from '@/types';
 
 const QuickActionCard: React.FC<{
   title: string;
@@ -38,10 +45,7 @@ const QuickActionCard: React.FC<{
   </Card>
 );
 
-const MeetingCard: React.FC<{ meeting: Meeting; onClick: () => void }> = ({
-  meeting,
-  onClick,
-}) => (
+const ContentCard: React.FC<{ content: Content; onClick: () => void }> = ({ content, onClick }) => (
   <Card
     hoverable
     onClick={onClick}
@@ -50,32 +54,39 @@ const MeetingCard: React.FC<{ meeting: Meeting; onClick: () => void }> = ({
     <div className="flex items-start justify-between">
       <div className="flex-1 min-w-0">
         <h4 className="font-semibold text-text-primary truncate mb-1">
-          {meeting.title}
+          {content.title}
         </h4>
         <p className="text-sm text-text-secondary">
-          {formatRelativeTime(meeting.meeting_date)} · {meeting.duration || '未知时长'}
+          {formatRelativeTime(content.content_date)} · {formatSourceType(content.source_type)}
+        </p>
+        <p className="text-sm text-text-primary mt-2">
+          {truncateText(content.summary_text || '暂无发言总结', 72)}
         </p>
         <div className="flex items-center gap-4 mt-2 text-sm text-text-tertiary">
           <span className="flex items-center gap-1">
-            <MessageOutlined />
-            {formatNumber(meeting.speech_count)} 条发言
+            <BulbOutlined />
+            {formatNumber(getContentPrimaryCount(content))} 条{getContentPrimaryLabel()}
           </span>
         </div>
       </div>
       <div
         className={`px-2 py-1 rounded-full text-xs ${
-          meeting.status === 'completed'
+          content.status === 'completed'
             ? 'bg-moss/10 text-moss'
-            : meeting.status === 'processing'
-            ? 'bg-terracotta/10 text-terracotta'
-            : 'bg-status-warning/10 text-status-warning'
+            : content.status === 'processing'
+              ? 'bg-terracotta/10 text-terracotta'
+              : content.status === 'ignored'
+                ? 'bg-status-warning/10 text-status-warning'
+                : 'bg-red-100 text-red-600'
         }`}
       >
-        {meeting.status === 'completed'
+        {content.status === 'completed'
           ? '已完成'
-          : meeting.status === 'processing'
-          ? '处理中'
-          : '待处理'}
+          : content.status === 'processing'
+            ? '处理中'
+            : content.status === 'ignored'
+              ? '已忽略'
+              : '待处理'}
       </div>
     </div>
   </Card>
@@ -83,40 +94,32 @@ const MeetingCard: React.FC<{ meeting: Meeting; onClick: () => void }> = ({
 
 export const Home: React.FC = () => {
   const navigate = useNavigate();
-  const { data, isLoading } = useMeetings({ page: 1, page_size: 5 });
-  const { meetings, setMeetings } = useMeetingStore();
-
-  useEffect(() => {
-    if (data?.items) {
-      setMeetings(data.items);
-    }
-  }, [data, setMeetings]);
+  const { data, isLoading } = useContents({ page: 1, page_size: 5 });
+  const contents = data?.items ?? [];
 
   const stats = [
-    { title: '会议总数', value: data?.total || 0, icon: <FileTextOutlined /> },
-    { title: '我的发言', value: meetings.reduce((acc, m) => acc + m.speech_count, 0), icon: <MessageOutlined /> },
+    { title: '内容总数', value: data?.total || 0, icon: <FileTextOutlined /> },
+    {
+      title: '思想金句',
+      value: contents.reduce((acc, item) => acc + getContentPrimaryCount(item), 0),
+      icon: <BulbOutlined />,
+    },
   ];
 
   if (isLoading) {
     return <LoadingState type="skeleton" rows={5} />;
   }
 
-  const hasMeetings = meetings.length > 0;
+  const hasContents = contents.length > 0;
 
   return (
     <div className="max-w-6xl mx-auto">
-      {/* Welcome Section */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-display text-text-primary mb-1">
-          欢迎来到 SpeakSum
-        </h1>
-        <p className="text-text-secondary text-sm">
-          智能分析会议记录，构建你的个人知识图谱
-        </p>
-      </div>
+      <PageHeader title="欢迎来到 SpeakSum" />
+      <p className="mb-6 max-w-3xl text-sm text-text-secondary">
+        这是刘彬的个人思想沉淀系统，持续整理会议发言、文章和其他文本中的长期价值。
+      </p>
 
-      {/* Stats */}
-      {hasMeetings && (
+      {hasContents && (
         <Row gutter={[16, 16]} className="mb-8">
           {stats.map((stat) => (
             <Col xs={24} sm={12} key={stat.title}>
@@ -133,21 +136,20 @@ export const Home: React.FC = () => {
         </Row>
       )}
 
-      {/* Quick Actions */}
       <h2 className="text-xl font-semibold text-text-primary mb-4">快速入口</h2>
       <Row gutter={[16, 16]} className="mb-8">
         <Col xs={24} md={8}>
           <QuickActionCard
-            title="上传会议"
-            description="上传新的会议纪要文件，开始智能分析"
+            title="上传内容"
+            description="上传会议纪要或其他文本，生成发言总结与思想金句"
             icon={<UploadOutlined />}
             onClick={() => navigate('/upload')}
           />
         </Col>
         <Col xs={24} md={8}>
           <QuickActionCard
-            title="查看时间线"
-            description="按时间查看所有会议发言记录"
+            title="查看思想记录"
+            description="按真实内容日期查看所有发言总结与金句沉淀"
             icon={<ClockCircleOutlined />}
             onClick={() => navigate('/timeline')}
           />
@@ -155,28 +157,27 @@ export const Home: React.FC = () => {
         <Col xs={24} md={8}>
           <QuickActionCard
             title="知识图谱"
-            description="可视化探索话题之间的关联关系"
+            description="按领域探索思想金句之间的聚合关系"
             icon={<ApartmentOutlined />}
             onClick={() => navigate('/graph')}
           />
         </Col>
       </Row>
 
-      {/* Recent Meetings */}
-      {hasMeetings ? (
+      {hasContents ? (
         <>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold text-text-primary">最近会议</h2>
+            <h2 className="text-xl font-semibold text-text-primary">最近内容</h2>
             <Button type="link" onClick={() => navigate('/timeline')}>
               查看全部
             </Button>
           </div>
           <div className="space-y-4">
-            {meetings.slice(0, 5).map((meeting) => (
-              <MeetingCard
-                key={meeting.id}
-                meeting={meeting}
-                onClick={() => navigate(`/timeline/${meeting.id}`)}
+            {contents.slice(0, 5).map((content) => (
+              <ContentCard
+                key={content.id}
+                content={content}
+                onClick={() => navigate(`/timeline/${content.id}`)}
               />
             ))}
           </div>

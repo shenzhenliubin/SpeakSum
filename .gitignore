@@ -44,3 +44,7 @@ Thumbs.db
 output/
 data/
 *.log
+.coverage
+speaksum.db
+speaksum.db-*
+uploads/

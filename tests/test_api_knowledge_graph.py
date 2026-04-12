@@ -1,24 +1,32 @@
-"""Tests for knowledge graph API."""
+"""Tests for the domain-based knowledge graph API."""
 
+from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from speaksum.models.models import User
-
+from speaksum.models.models import Content, Domain, Quote, QuoteDomain, User
 
 
 def test_get_knowledge_graph(authorized_client: TestClient) -> None:
-    """Test getting knowledge graph data."""
-    # Mock the knowledge graph builder
     mock_graph_data = {
-        "nodes": [{"id": "topic1", "type": "topic", "label": "产品策略", "x": 0, "y": 0}],
-        "edges": [{"source": "topic1", "target": "speech1", "type": "contains"}]
+        "nodes": [
+            {
+                "id": "decision_method",
+                "type": "domain",
+                "label": "方法论与决策",
+                "x": 0,
+                "y": 0,
+                "item_count": 3,
+            }
+        ],
+        "edges": [],
+        "layout_version": "2",
     }
 
-    with patch("speaksum.api.knowledge_graph.KnowledgeGraphBuilder") as MockBuilder:
+    with patch("speaksum.api.knowledge_graph.DomainGraphBuilder") as MockBuilder:
         mock_instance = MagicMock()
         mock_instance.build_graph = AsyncMock(return_value=mock_graph_data)
         MockBuilder.return_value = mock_instance
@@ -26,66 +34,97 @@ def test_get_knowledge_graph(authorized_client: TestClient) -> None:
         resp = authorized_client.get("/api/v1/knowledge-graph")
         assert resp.status_code == 200
         data = resp.json()
-        assert "nodes" in data
-        assert "edges" in data
-
-
-def test_get_topic_speeches_not_found(authorized_client: TestClient) -> None:
-    """Test getting speeches for non-existent topic."""
-    resp = authorized_client.get("/api/v1/knowledge-graph/topics/nonexistent-id/speeches")
-    assert resp.status_code == 404
+        assert data["nodes"][0]["type"] == "domain"
+        assert data["layout_version"] == "2"
 
 
 @pytest.mark.asyncio
-async def test_get_topic_speeches_empty(
+async def test_get_knowledge_graph_returns_domain_nodes(
     authorized_client: TestClient,
     db_session: AsyncSession,
-    test_user: User
+    test_user: User,
 ) -> None:
-    """Test getting speeches for topic with no speeches."""
-    from speaksum.models.models import Topic
-
-    # Create a topic for the user
-    topic = Topic(
+    content = Content(
         user_id=test_user.id,
-        name="Empty Topic",
-        speech_count=0
+        title="数字化专题会",
+        source_type="other_text",
+        status="completed",
+        content_date=date(2026, 4, 5),
     )
-    db_session.add(topic)
+    domain = Domain(
+        id="technology_architecture",
+        display_name="技术与架构",
+        sort_order=1,
+    )
+    db_session.add_all([content, domain])
     await db_session.commit()
-    await db_session.refresh(topic)
+    await db_session.refresh(content)
 
-    # Get speeches for topic (should return empty list)
-    resp = authorized_client.get(f"/api/v1/knowledge-graph/topics/{topic.id}/speeches")
+    quote = Quote(
+        content_id=content.id,
+        user_id=test_user.id,
+        sequence_number=1,
+        text="平台化建设要先定义边界。",
+    )
+    db_session.add(quote)
+    await db_session.commit()
+    await db_session.refresh(quote)
+    db_session.add(QuoteDomain(quote_id=quote.id, domain_id=domain.id))
+    await db_session.commit()
+
+    resp = authorized_client.get("/api/v1/knowledge-graph")
     assert resp.status_code == 200
     data = resp.json()
-    assert len(data) == 0
+    assert len(data["nodes"]) == 1
+    assert data["nodes"][0]["type"] == "domain"
+    assert data["nodes"][0]["label"] == "技术与架构"
+    assert data["nodes"][0]["item_count"] == 1
 
 
 @pytest.mark.asyncio
-async def test_access_another_user_topic(
+async def test_get_domain_detail_returns_quotes(
     authorized_client: TestClient,
     db_session: AsyncSession,
-    test_user: User
+    test_user: User,
 ) -> None:
-    """Test accessing another user's topic should return 404."""
-    from speaksum.models.models import Topic
-
-    # Create another user
-    other_user = User(id="other-user-999", email="other3@example.com", password_hash="hashed")
-    db_session.add(other_user)
-    await db_session.commit()
-
-    # Create topic for other user
-    other_topic = Topic(
-        user_id=other_user.id,
-        name="Other Topic",
-        speech_count=0
+    domain = Domain(
+        id="technology_architecture",
+        display_name="技术与架构",
+        sort_order=2,
     )
-    db_session.add(other_topic)
+    content = Content(
+        user_id=test_user.id,
+        title="技术规划随笔",
+        source_type="other_text",
+        content_date=date(2026, 4, 6),
+        status="completed",
+        summary_text="刘彬在文本中强调平台边界与演进节奏。",
+    )
+    db_session.add_all([domain, content])
     await db_session.commit()
-    await db_session.refresh(other_topic)
+    await db_session.refresh(content)
 
-    # Try to access other user's topic speeches
-    resp = authorized_client.get(f"/api/v1/knowledge-graph/topics/{other_topic.id}/speeches")
+    quote = Quote(
+        content_id=content.id,
+        user_id=test_user.id,
+        sequence_number=1,
+        text="平台化的前提是先定义边界。",
+    )
+    db_session.add(quote)
+    await db_session.commit()
+    await db_session.refresh(quote)
+    db_session.add(QuoteDomain(quote_id=quote.id, domain_id=domain.id))
+    await db_session.commit()
+
+    resp = authorized_client.get(f"/api/v1/knowledge-graph/domains/{domain.id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["domain"]["id"] == "technology_architecture"
+    assert data["quotes"][0]["text"] == "平台化的前提是先定义边界。"
+    assert data["quotes"][0]["content_id"] == content.id
+    assert data["quotes"][0]["domain_ids"] == ["technology_architecture"]
+
+
+def test_get_domain_detail_not_found(authorized_client: TestClient) -> None:
+    resp = authorized_client.get("/api/v1/knowledge-graph/domains/nonexistent-domain")
     assert resp.status_code == 404

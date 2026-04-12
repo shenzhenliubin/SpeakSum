@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { settingsApi } from '@/services/settingsApi';
-import type { ModelConfig } from '@/types';
+import type { ModelConfig, ModelConfigTestPayload } from '@/types';
 
 const MODEL_CONFIGS_KEY = 'modelConfigs';
 
@@ -20,5 +20,11 @@ export const useUpdateModelConfigs = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [MODEL_CONFIGS_KEY] });
     },
+  });
+};
+
+export const useTestModelConfig = () => {
+  return useMutation({
+    mutationFn: (payload: ModelConfigTestPayload) => settingsApi.testModelConfig(payload),
   });
 };

@@ -1,73 +1,91 @@
 import { http, HttpResponse } from 'msw';
 import { faker } from '@faker-js/faker';
 import type {
-  Meeting,
-  Speech,
-  GraphLayout,
-  ProcessingTask,
-  Topic,
+  Content,
+  Domain,
+  GraphDomainDetail,
   GraphEdge,
+  GraphLayout,
+  GraphNode,
   ModelConfig,
+  ProcessingTask,
+  Quote,
+  SpeakerIdentity,
 } from '@/types';
 
-// Helper to generate fake meeting
-const generateMeeting = (status: 'processing' | 'completed' | 'error' = 'completed'): Meeting => ({
-  id: `mtg_${faker.string.alphanumeric(8)}`,
-  title: `${faker.commerce.productName()}会议`,
-  meeting_date: faker.date.recent({ days: 30 }).toISOString().split('T')[0],
-  participants: faker.helpers.uniqueArray(() => faker.person.fullName(), faker.number.int({ min: 2, max: 5 })),
-  speech_count: faker.number.int({ min: 5, max: 50 }),
-  topic_count: faker.number.int({ min: 2, max: 10 }),
-  status,
-  source_file: `meeting_${faker.date.recent().toISOString().split('T')[0]}.txt`,
-  file_size: faker.number.int({ min: 1024, max: 1024 * 1024 }),
+const defaultDomains: Domain[] = [
+  {
+    id: 'decision_method',
+    display_name: '方法论与决策',
+    description: '与判断框架、决策方式相关的思想输出。',
+    is_system_default: true,
+    sort_order: 1,
+    created_at: faker.date.past().toISOString(),
+  },
+  {
+    id: 'technology_architecture',
+    display_name: '技术与架构',
+    description: '与技术路线、架构设计、工程治理相关的思想输出。',
+    is_system_default: true,
+    sort_order: 2,
+    created_at: faker.date.past().toISOString(),
+  },
+];
+
+const buildQuote = (contentId: string, domainIds: string[]): Quote => ({
+  id: `quote_${faker.string.alphanumeric(8)}`,
+  content_id: contentId,
+  sequence_number: faker.number.int({ min: 1, max: 5 }),
+  text: faker.helpers.arrayElement([
+    '先明确约束条件，再决定资源投入节奏。',
+    '平台化不是多做组件，而是先定义边界。',
+    '组织扩张前要先解决协作链路的阻塞点。',
+  ]),
+  domain_ids: domainIds,
   created_at: faker.date.recent({ days: 30 }).toISOString(),
+  updated_at: faker.date.recent({ days: 5 }).toISOString(),
 });
 
-// Helper to generate fake speech
-const generateSpeech = (meetingId: string): Speech => ({
-  id: `spc_${faker.string.alphanumeric(8)}`,
-  meeting_id: meetingId,
-  timestamp: `${faker.number.int({ min: 9, max: 18 })}:${faker.number.int({ min: 0, max: 59 }).toString().padStart(2, '0')}:${faker.number.int({ min: 0, max: 59 }).toString().padStart(2, '0')}`,
-  speaker: faker.person.fullName(),
-  raw_text: faker.lorem.paragraph(),
-  cleaned_text: faker.lorem.paragraph(),
-  key_quotes: faker.helpers.arrayElements([
-    '方案设计需要全面评估可行性和风险',
-    '团队协作是项目成功的关键',
-    '数据驱动决策能提高成功率',
-  ], { min: 0, max: 2 }),
-  topics: faker.helpers.uniqueArray(() => faker.commerce.productName(), faker.number.int({ min: 1, max: 3 })),
-  sentiment: faker.helpers.arrayElement(['positive', 'negative', 'neutral', 'mixed']),
-  word_count: faker.number.int({ min: 20, max: 200 }),
-  created_at: faker.date.recent({ days: 30 }).toISOString(),
-});
-
-// Helper to generate fake topic node
-const generateTopic = (): Topic => {
-  const count = faker.number.int({ min: 3, max: 20 });
-  const firstDate = faker.date.past({ years: 1 });
-  const lastDate = faker.date.recent({ days: 30 });
+const buildContent = (status: Content['status'] = 'completed'): Content => {
+  const sourceType = faker.helpers.arrayElement<Content['source_type']>(['meeting_minutes', 'other_text']);
+  const contentId = `content_${faker.string.alphanumeric(8)}`;
+  const quotes = [buildQuote(contentId, [faker.helpers.arrayElement(defaultDomains).id])];
   return {
-    id: `topic_${faker.string.alphanumeric(6)}`,
-    name: faker.commerce.productName(),
-    count,
-    meeting_count: faker.number.int({ min: 1, max: 5 }),
-    first_appearance: firstDate.toISOString().split('T')[0],
-    last_appearance: lastDate.toISOString().split('T')[0],
-    x: faker.number.float({ min: 50, max: 750 }),
-    y: faker.number.float({ min: 50, max: 550 }),
+    id: contentId,
+    user_id: `user_${faker.string.alphanumeric(8)}`,
+    title: sourceType === 'meeting_minutes' ? `${faker.company.name()}会议纪要` : `${faker.company.buzzPhrase()}随笔`,
+    source_type: sourceType,
+    content_date: faker.date.recent({ days: 30 }).toISOString().split('T')[0],
+    source_file_name: `${faker.system.fileName()}.txt`,
+    source_file_path: null,
+    source_file_size: faker.number.int({ min: 1024, max: 1024 * 512 }),
+    file_type: 'txt',
+    status,
+    ignored_reason: status === 'ignored' ? '未检测到刘彬发言，因此未生成记录' : null,
+    error_message: status === 'failed' ? '处理失败' : null,
+    summary_text: '这是一段结构化的发言总结，概括了本次内容的核心判断和重点关注方向。',
+    quotes,
+    created_at: faker.date.recent({ days: 30 }).toISOString(),
+    updated_at: faker.date.recent({ days: 5 }).toISOString(),
+    completed_at: status === 'completed' ? faker.date.recent({ days: 2 }).toISOString() : null,
   };
 };
 
-// Mock storage for tracking task progress
+const buildGraphNode = (domain: Domain, index: number): GraphNode => ({
+  id: domain.id,
+  type: 'domain',
+  label: domain.display_name,
+  x: 160 + index * 120,
+  y: 200 + (index % 2) * 80,
+  size: 28 + index * 4,
+});
+
 const taskProgressMap = new Map<string, number>();
+const taskContentMap = new Map<string, string>();
 
 export const handlers = [
-  // ========== Auth ==========
-  // POST /api/v1/auth/login
   http.post('/api/v1/auth/login', async ({ request }) => {
-    const body = await request.json() as { email: string; password: string };
+    const body = await request.json() as { email: string };
     return HttpResponse.json({
       user: {
         id: `user_${faker.string.alphanumeric(8)}`,
@@ -79,9 +97,8 @@ export const handlers = [
     });
   }),
 
-  // POST /api/v1/auth/register
   http.post('/api/v1/auth/register', async ({ request }) => {
-    const body = await request.json() as { email: string; password: string; name: string };
+    const body = await request.json() as { email: string; name: string };
     return HttpResponse.json({
       user: {
         id: `user_${faker.string.alphanumeric(8)}`,
@@ -93,7 +110,6 @@ export const handlers = [
     });
   }),
 
-  // GET /api/v1/auth/me
   http.get('/api/v1/auth/me', () => {
     return HttpResponse.json({
       id: `user_${faker.string.alphanumeric(8)}`,
@@ -103,61 +119,50 @@ export const handlers = [
     });
   }),
 
-  // POST /api/v1/auth/refresh
   http.post('/api/v1/auth/refresh', () => {
     return HttpResponse.json({
       token: `mock-refreshed-token-${faker.string.alphanumeric(16)}`,
     });
   }),
 
-  // ========== Upload ==========
-  // POST /api/v1/upload
   http.post('/api/v1/upload', async () => {
     const taskId = `task_${faker.string.alphanumeric(8)}`;
-    const meetingId = `mtg_${faker.string.alphanumeric(8)}`;
-
-    // Initialize task progress
+    const contentId = `content_${faker.string.alphanumeric(8)}`;
     taskProgressMap.set(taskId, 0);
-
-    return HttpResponse.json({
-      task_id: taskId,
-      meeting_id: meetingId,
-      status: 'pending',
-    }, { status: 202 });
+    taskContentMap.set(taskId, contentId);
+    return HttpResponse.json(
+      {
+        task_id: taskId,
+        content_id: contentId,
+        status: 'pending',
+      },
+      { status: 202 }
+    );
   }),
 
-  // GET /api/v1/upload/:task_id/status
   http.get('/api/v1/upload/:task_id/status', ({ params }) => {
     const taskId = params.task_id as string;
-    let progress = taskProgressMap.get(taskId) || 0;
-
-    // Simulate progress increment
-    progress += 20;
+    const contentId = taskContentMap.get(taskId) || `content_${faker.string.alphanumeric(8)}`;
+    const progress = Math.min((taskProgressMap.get(taskId) || 0) + 25, 100);
     taskProgressMap.set(taskId, progress);
-
-    let status: ProcessingTask['status'] = 'processing';
-    let currentStep = 'extracting';
-
-    if (progress >= 100) {
-      status = 'completed';
-      currentStep = 'completed';
-    }
+    const completed = progress >= 100;
 
     return HttpResponse.json({
       task_id: taskId,
-      meeting_id: `mtg_${faker.string.alphanumeric(8)}`,
-      status,
+      content_id: contentId,
+      status: completed ? 'completed' : 'processing',
       progress,
-      current_step: currentStep,
+      current_step: completed ? 'completed' : 'summarizing',
+      message: completed ? '处理完成' : '正在生成发言总结',
       error_message: null,
       created_at: faker.date.recent().toISOString(),
       updated_at: new Date().toISOString(),
-    });
+    } satisfies ProcessingTask);
   }),
 
-  // GET /api/v1/upload/:task_id/stream (SSE)
-  http.get('/api/v1/upload/:task_id/stream', ({ params }) => {
+  http.get('/api/v1/process/:task_id/stream', ({ params }) => {
     const taskId = params.task_id as string;
+    const contentId = taskContentMap.get(taskId) || `content_${faker.string.alphanumeric(8)}`;
 
     const stream = new ReadableStream({
       start(controller) {
@@ -165,14 +170,15 @@ export const handlers = [
         let progress = 0;
 
         const interval = setInterval(() => {
-          progress += 20;
-
+          progress += 25;
+          const completed = progress >= 100;
           const data: ProcessingTask = {
             task_id: taskId,
-            meeting_id: `mtg_${faker.string.alphanumeric(8)}`,
-            status: progress >= 100 ? 'completed' : 'processing',
+            content_id: contentId,
+            status: completed ? 'completed' : 'processing',
             progress,
-            current_step: progress >= 100 ? 'completed' : 'extracting',
+            current_step: completed ? 'completed' : 'extracting_quotes',
+            message: completed ? '处理完成' : '正在提炼思想金句',
             error_message: null,
             created_at: faker.date.recent().toISOString(),
             updated_at: new Date().toISOString(),
@@ -180,11 +186,11 @@ export const handlers = [
 
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
 
-          if (progress >= 100) {
+          if (completed) {
             clearInterval(interval);
             controller.close();
           }
-        }, 1000);
+        }, 100);
       },
     });
 
@@ -192,38 +198,21 @@ export const handlers = [
       headers: {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
+        Connection: 'keep-alive',
       },
     });
   }),
 
-  // ========== Meetings ==========
-  // GET /api/v1/meetings
-  http.get('/api/v1/meetings', ({ request }) => {
+  http.get('/api/v1/contents', ({ request }) => {
     const url = new URL(request.url);
     const page = parseInt(url.searchParams.get('page') || '1');
     const pageSize = parseInt(url.searchParams.get('page_size') || '20');
     const q = url.searchParams.get('q');
-    const status = url.searchParams.get('status') as 'processing' | 'completed' | 'error' | null;
+    const status = url.searchParams.get('status') as Content['status'] | null;
 
-    // Generate mock meetings
-    const total = 45;
-    const allMeetings = Array.from({ length: total }, () =>
-      generateMeeting(status || faker.helpers.arrayElement(['processing', 'completed', 'error']))
-    );
-
-    // Filter by search query
-    let filtered = allMeetings;
-    if (q) {
-      filtered = allMeetings.filter((m) =>
-        m.title.toLowerCase().includes(q.toLowerCase())
-      );
-    }
-
-    // Pagination
-    const start = (page - 1) * pageSize;
-    const end = start + pageSize;
-    const items = filtered.slice(start, end);
+    const allContents = Array.from({ length: 24 }, () => buildContent(status || faker.helpers.arrayElement(['processing', 'completed'])));
+    const filtered = q ? allContents.filter((content) => content.title.includes(q)) : allContents;
+    const items = filtered.slice((page - 1) * pageSize, page * pageSize);
 
     return HttpResponse.json({
       items,
@@ -234,103 +223,79 @@ export const handlers = [
     });
   }),
 
-  // GET /api/v1/meetings/:meeting_id
-  http.get('/api/v1/meetings/:meeting_id', ({ params }) => {
-    const meetingId = params.meeting_id as string;
-
-    const meeting = generateMeeting();
+  http.get('/api/v1/contents/:content_id', ({ params }) => {
+    const contentId = params.content_id as string;
+    const content = buildContent();
+    const quotes = [buildQuote(contentId, ['decision_method']), buildQuote(contentId, ['technology_architecture'])];
     return HttpResponse.json({
-      ...meeting,
-      id: meetingId,
-      source_file: 'meeting_2024_04_01.txt',
-      file_size: 1024 * 1024,
-    } as Meeting);
+      ...content,
+      id: contentId,
+      quotes,
+    } satisfies Content);
   }),
 
-  // DELETE /api/v1/meetings/:meeting_id
-  http.delete('/api/v1/meetings/:meeting_id', () => {
-    return new HttpResponse(null, { status: 204 });
-  }),
+  http.delete('/api/v1/contents/:content_id', () => new HttpResponse(null, { status: 204 })),
 
-  // ========== Speeches ==========
-  // GET /api/v1/meetings/:meeting_id/speeches
-  http.get('/api/v1/meetings/:meeting_id/speeches', ({ params, request }) => {
-    const meetingId = params.meeting_id as string;
-    const url = new URL(request.url);
-    const _page = parseInt(url.searchParams.get('page') || '1');
-    const _pageSize = parseInt(url.searchParams.get('page_size') || '50');
-
-    // Suppress unused variable warnings while keeping API compatibility
-    void _page;
-    void _pageSize;
-
-    const total = 15;
-    const items = Array.from({ length: total }, () => generateSpeech(meetingId));
-
+  http.patch('/api/v1/contents/:content_id/summary', async ({ params, request }) => {
+    const contentId = params.content_id as string;
+    const body = await request.json() as { summary_text: string };
+    const content = buildContent();
     return HttpResponse.json({
-      items,
-      total,
-    });
+      ...content,
+      id: contentId,
+      summary_text: body.summary_text,
+    } satisfies Content);
   }),
 
-  // GET /api/v1/speeches/:speech_id
-  http.get('/api/v1/speeches/:speech_id', ({ params }) => {
-    const speechId = params.speech_id as string;
-
+  http.patch('/api/v1/contents/:content_id/quotes/:quote_id', async ({ params, request }) => {
+    const quoteId = params.quote_id as string;
+    const body = await request.json() as Partial<Quote>;
     return HttpResponse.json({
-      ...generateSpeech('mtg_test'),
-      id: speechId,
-    });
+      ...buildQuote(params.content_id as string, body.domain_ids || ['decision_method']),
+      id: quoteId,
+      text: body.text || '更新后的思想金句',
+      domain_ids: body.domain_ids || ['decision_method'],
+    } satisfies Quote);
   }),
 
-  // PATCH /api/v1/speeches/:speech_id
-  http.patch('/api/v1/speeches/:speech_id', async ({ params, request }) => {
-    const speechId = params.speech_id as string;
-    const updates = await request.json() as Partial<Speech>;
-    const baseSpeech = generateSpeech('mtg_test');
+  http.delete('/api/v1/contents/:content_id/quotes/:quote_id', () => new HttpResponse(null, { status: 204 })),
 
-    return HttpResponse.json({
-      ...baseSpeech,
-      id: speechId,
-      ...updates,
-    } as Speech);
-  }),
-
-  // ========== Knowledge Graph ==========
-  // GET /api/v1/knowledge-graph
   http.get('/api/v1/knowledge-graph', () => {
-    const nodes: Topic[] = Array.from({ length: 8 }, generateTopic);
-
-    const edges: GraphEdge[] = nodes.slice(0, -1).map((node, i) => ({
-      source: node.id,
-      target: nodes[i + 1]?.id || nodes[0].id,
-      strength: faker.number.float({ min: 0.3, max: 1 }),
-      co_occurrence: faker.number.int({ min: 1, max: 10 }),
-    }));
+    const nodes = defaultDomains.map(buildGraphNode);
+    const edges: GraphEdge[] = [
+      {
+        source: defaultDomains[0]!.id,
+        target: defaultDomains[1]!.id,
+        strength: 0.72,
+        type: 'related',
+      },
+    ];
 
     return HttpResponse.json({
       nodes,
       edges,
-      layout_version: '1',
-    } as GraphLayout);
+      layout_version: '2',
+    } satisfies GraphLayout);
   }),
 
-  // GET /api/v1/knowledge-graph/topics/:topic_id/speeches
-  http.get('/api/v1/knowledge-graph/topics/:topic_id/speeches', ({ params }) => {
-    const topicId = params.topic_id as string;
-
-    return HttpResponse.json({
-      topic: {
-        ...generateTopic(),
-        id: topicId,
-      },
-      speeches: Array.from({ length: 5 }, () => generateSpeech('mtg_test')),
-      total: 5,
-    });
+  http.get('/api/v1/knowledge-graph/domains/:domain_id', ({ params }) => {
+    const domainId = params.domain_id as string;
+    const domain = defaultDomains.find((item) => item.id === domainId) || defaultDomains[0]!;
+    const detail: GraphDomainDetail = {
+      domain,
+      quotes: [
+        {
+          id: `quote_${faker.string.alphanumeric(6)}`,
+          content_id: `content_${faker.string.alphanumeric(6)}`,
+          text: '先明确边界，再决定资源投入节奏。',
+          domain_ids: [domain.id],
+        },
+      ],
+      total: 1,
+    };
+    return HttpResponse.json(detail);
   }),
 
-  // ========== Settings ==========
-  // GET /api/v1/settings/model
   http.get('/api/v1/settings/model', () => {
     const configs: ModelConfig[] = [
       {
@@ -338,46 +303,88 @@ export const handlers = [
         provider: 'openai',
         name: 'OpenAI GPT-4',
         has_api_key: true,
-        base_url: 'https://api.openai.com/v1',
+        base_url: null,
         default_model: 'gpt-4',
         is_default: true,
         is_enabled: true,
         created_at: faker.date.past().toISOString(),
       },
       {
-        id: 'cfg_kimi',
-        provider: 'kimi',
-        name: 'Kimi Moonshot',
-        has_api_key: false,
+        id: 'cfg_siliconflow',
+        provider: 'siliconflow',
+        name: '硅基流动',
+        has_api_key: true,
         base_url: null,
-        default_model: 'moonshot-v1',
+        default_model: 'deepseek-ai/DeepSeek-V3',
         is_default: false,
         is_enabled: true,
         created_at: faker.date.past().toISOString(),
       },
     ];
+    return HttpResponse.json(configs);
+  }),
 
+  http.put('/api/v1/settings/model', async ({ request }) => {
+    const body = await request.json() as ModelConfig[];
+    return HttpResponse.json(body);
+  }),
+
+  http.post('/api/v1/settings/model/test', async ({ request }) => {
+    const body = await request.json() as { provider: string; default_model: string };
     return HttpResponse.json({
-      configs,
-      default_config_id: 'cfg_openai',
+      success: true,
+      message: '连接成功',
+      provider: body.provider,
+      model: body.default_model,
     });
   }),
 
-  // PUT /api/v1/settings/model
-  http.put('/api/v1/settings/model', async ({ request }) => {
-    const body = await request.json() as { action: string; config?: Partial<ModelConfig> };
-
-    if (body.action === 'create' && body.config) {
-      return HttpResponse.json({
-        success: true,
-        config: {
-          ...body.config,
-          id: `cfg_${faker.string.alphanumeric(6)}`,
-          created_at: new Date().toISOString(),
-        },
-      });
-    }
-
-    return HttpResponse.json({ success: true });
+  http.get('/api/v1/speaker-identities', () => {
+    const identities: SpeakerIdentity[] = [
+      {
+        id: 'identity-liubin',
+        user_id: 'user-test',
+        display_name: '刘彬',
+        aliases: ['老刘'],
+        color: null,
+        avatar_url: null,
+        is_default: true,
+        created_at: faker.date.past().toISOString(),
+        updated_at: faker.date.recent().toISOString(),
+      },
+    ];
+    return HttpResponse.json({ success: true, data: identities, meta: null, error: null });
   }),
+
+  http.post('/api/v1/speaker-identities', async ({ request }) => {
+    const body = await request.json() as Omit<SpeakerIdentity, 'id' | 'created_at' | 'updated_at'>;
+    return HttpResponse.json({
+      success: true,
+      data: {
+        ...body,
+        id: `identity_${faker.string.alphanumeric(6)}`,
+        created_at: faker.date.recent().toISOString(),
+        updated_at: faker.date.recent().toISOString(),
+      },
+      meta: null,
+      error: null,
+    });
+  }),
+
+  http.put('/api/v1/speaker-identities/:identity_id', async ({ params, request }) => {
+    const body = await request.json() as Omit<SpeakerIdentity, 'id' | 'created_at' | 'updated_at'>;
+    return HttpResponse.json({
+      success: true,
+      data: {
+        ...body,
+        id: params.identity_id as string,
+        created_at: faker.date.past().toISOString(),
+        updated_at: faker.date.recent().toISOString(),
+      },
+      meta: null,
+      error: null,
+    });
+  }),
+
+  http.delete('/api/v1/speaker-identities/:identity_id', () => new HttpResponse(null, { status: 204 })),
 ];

@@ -1,42 +1,61 @@
-"""Tests for API edge cases to improve coverage."""
+"""Edge-case coverage for the content-first API surface."""
 
+from datetime import date
+
+import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from speaksum.models.models import Meeting
+from speaksum.models.models import Content
 
 
-def test_list_meetings_empty(authorized_client: TestClient) -> None:
-    """Test listing meetings when none exist."""
-    resp = authorized_client.get("/api/v1/meetings")
+def test_list_contents_empty(authorized_client: TestClient) -> None:
+    resp = authorized_client.get("/api/v1/contents")
     assert resp.status_code == 200
     data = resp.json()
     assert "total" in data
     assert "items" in data
 
 
-def test_list_meetings_with_pagination(authorized_client: TestClient, sample_meeting: Meeting) -> None:
-    """Test listing meetings with different page sizes."""
-    resp = authorized_client.get("/api/v1/meetings?page=1&size=5")
+@pytest.mark.asyncio
+async def test_list_contents_with_pagination(
+    authorized_client: TestClient,
+    db_session: AsyncSession,
+    test_user,
+) -> None:
+    content = Content(
+        user_id=test_user.id,
+        title="产品专题会",
+        source_type="meeting_minutes",
+        content_date=date(2026, 4, 6),
+        status="completed",
+        summary_text="这是一段摘要。",
+    )
+    db_session.add(content)
+    await db_session.commit()
+
+    resp = authorized_client.get("/api/v1/contents?page=1&page_size=5")
     assert resp.status_code == 200
-    data = resp.json()
-    assert len(data["items"]) <= 5
+    assert len(resp.json()["items"]) <= 5
 
 
-def test_search_meetings_special_chars(authorized_client: TestClient) -> None:
-    """Test searching meetings with special characters."""
-    resp = authorized_client.get("/api/v1/meetings?q=%E4%BA%A7%E5%93%81")  # URL encoded Chinese
+@pytest.mark.asyncio
+async def test_search_contents_special_chars(
+    authorized_client: TestClient,
+    db_session: AsyncSession,
+    test_user,
+) -> None:
+    content = Content(
+        user_id=test_user.id,
+        title="产品&技术复盘",
+        source_type="other_text",
+        content_date=date(2026, 4, 6),
+        status="completed",
+        summary_text="这是一段摘要。",
+    )
+    db_session.add(content)
+    await db_session.commit()
+
+    resp = authorized_client.get("/api/v1/contents?q=%E4%BA%A7%E5%93%81")
     assert resp.status_code == 200
-
-
-def test_upload_empty_speaker_identity(authorized_client: TestClient, tmp_path) -> None:
-    """Test upload with empty speaker identity."""
-    txt = tmp_path / "meeting.txt"
-    txt.write_text("[10:30] 我: hello", encoding="utf-8")
-
-    with open(txt, "rb") as f:
-        resp = authorized_client.post(
-            "/api/v1/upload?speaker_identity=",
-            files={"file": ("meeting.txt", f, "text/plain")},
-        )
-    # Should still work with empty speaker identity
-    assert resp.status_code in [202, 400]
+    assert resp.json()["total"] >= 1

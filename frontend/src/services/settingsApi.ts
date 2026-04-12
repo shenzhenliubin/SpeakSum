@@ -1,5 +1,10 @@
 import { apiClient } from './api';
-import type { ModelConfig, SpeakerIdentity } from '@/types';
+import type {
+  ModelConfig,
+  ModelConfigTestPayload,
+  ModelConfigTestResult,
+  SpeakerIdentity,
+} from '@/types';
 
 // Backend envelope for speaker identities
 interface Envelope<T> {
@@ -22,7 +27,7 @@ export const settingsApi = {
     const body = configs.map((c) => ({
       provider: c.provider,
       name: c.name,
-      api_key: (c as Record<string, unknown>).api_key as string | undefined,
+      api_key: (c as unknown as { api_key?: string }).api_key,
       base_url: c.base_url,
       default_model: c.default_model,
       is_default: c.is_default,
@@ -30,6 +35,9 @@ export const settingsApi = {
     }));
     return apiClient.put('/settings/model', body);
   },
+
+  testModelConfig: (payload: ModelConfigTestPayload): Promise<ModelConfigTestResult> =>
+    apiClient.post('/settings/model/test', payload),
 
   // Speaker identities
   getIdentities: (): Promise<SpeakerIdentity[]> =>

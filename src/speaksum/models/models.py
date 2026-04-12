@@ -65,6 +65,9 @@ class User(Base):
     graph_layouts: Mapped[list["GraphLayout"]] = relationship("GraphLayout", back_populates="user", cascade="all, delete-orphan")
     model_configs: Mapped[list["UserModelConfig"]] = relationship("UserModelConfig", back_populates="user", cascade="all, delete-orphan")
     speaker_identities: Mapped[list["SpeakerIdentity"]] = relationship("SpeakerIdentity", back_populates="user", cascade="all, delete-orphan")
+    viewpoints: Mapped[list["Viewpoint"]] = relationship("Viewpoint", back_populates="user", cascade="all, delete-orphan")
+    contents: Mapped[list["Content"]] = relationship("Content", back_populates="user", cascade="all, delete-orphan")
+    quotes: Mapped[list["Quote"]] = relationship("Quote", back_populates="user", cascade="all, delete-orphan")
 
 
 class Meeting(Base):
@@ -77,6 +80,9 @@ class Meeting(Base):
     duration_minutes: Mapped[int | None] = mapped_column(nullable=True)
     participants: Mapped[list[str] | None] = mapped_column(JSON, default=list)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    context_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    key_quotes: Mapped[list[str] | None] = mapped_column(JSON, default=list)
+    ignored_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_file: Mapped[str] = mapped_column(String(255), nullable=False)
     file_size: Mapped[int] = mapped_column(default=0)
     status: Mapped[str] = mapped_column(String(50), default="pending")  # pending/processing/completed/failed
@@ -85,6 +91,7 @@ class Meeting(Base):
 
     user: Mapped["User"] = relationship("User", back_populates="meetings")
     speeches: Mapped[list["Speech"]] = relationship("Speech", back_populates="meeting", cascade="all, delete-orphan")
+    viewpoints: Mapped[list["Viewpoint"]] = relationship("Viewpoint", back_populates="meeting", cascade="all, delete-orphan")
 
 
 class Speech(Base):
@@ -106,6 +113,110 @@ class Speech(Base):
     updated_at: Mapped[datetime] = mapped_column(default=now_utc, onupdate=now_utc)
 
     meeting: Mapped["Meeting"] = relationship("Meeting", back_populates="speeches")
+
+
+class Viewpoint(Base):
+    __tablename__ = "viewpoints"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    meeting_id: Mapped[str] = mapped_column(ForeignKey("meetings.id"), nullable=False)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    sequence_number: Mapped[int] = mapped_column(default=0)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    topics: Mapped[list[str] | None] = mapped_column(JSON, default=list)
+    confidence: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(default=now_utc, onupdate=now_utc)
+
+    meeting: Mapped["Meeting"] = relationship("Meeting", back_populates="viewpoints")
+    user: Mapped["User"] = relationship("User", back_populates="viewpoints")
+
+
+class Content(Base):
+    __tablename__ = "contents"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    content_date: Mapped[date | None] = mapped_column(nullable=True)
+    source_file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source_file_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_file_size: Mapped[int | None] = mapped_column(nullable=True)
+    file_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    status: Mapped[str] = mapped_column(String(50), default="pending")
+    ignored_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(default=now_utc, onupdate=now_utc)
+
+    user: Mapped["User"] = relationship("User", back_populates="contents")
+    quotes: Mapped[list["Quote"]] = relationship("Quote", back_populates="content", cascade="all, delete-orphan")
+
+
+class Quote(Base):
+    __tablename__ = "quotes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    content_id: Mapped[str] = mapped_column(ForeignKey("contents.id"), nullable=False)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    sequence_number: Mapped[int] = mapped_column(nullable=False, default=0)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(default=now_utc, onupdate=now_utc)
+
+    content: Mapped["Content"] = relationship("Content", back_populates="quotes")
+    user: Mapped["User"] = relationship("User", back_populates="quotes")
+    quote_domains: Mapped[list["QuoteDomain"]] = relationship(
+        "QuoteDomain",
+        back_populates="quote",
+        cascade="all, delete-orphan",
+    )
+
+
+class Domain(Base):
+    __tablename__ = "domains"
+
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_system_default: Mapped[bool] = mapped_column(default=True)
+    sort_order: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(default=now_utc, onupdate=now_utc)
+
+    quote_domains: Mapped[list["QuoteDomain"]] = relationship(
+        "QuoteDomain",
+        back_populates="domain",
+        cascade="all, delete-orphan",
+    )
+
+
+class QuoteDomain(Base):
+    __tablename__ = "quote_domains"
+
+    quote_id: Mapped[str] = mapped_column(ForeignKey("quotes.id"), primary_key=True)
+    domain_id: Mapped[str] = mapped_column(ForeignKey("domains.id"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(default=now_utc)
+
+    quote: Mapped["Quote"] = relationship("Quote", back_populates="quote_domains")
+    domain: Mapped["Domain"] = relationship("Domain", back_populates="quote_domains")
+
+
+class DomainRelation(Base):
+    __tablename__ = "domain_relations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    domain_a_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    domain_b_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    co_occurrence_score: Mapped[float] = mapped_column(default=0.0)
+    temporal_score: Mapped[float] = mapped_column(default=0.0)
+    total_score: Mapped[float] = mapped_column(default=0.0)
+    created_at: Mapped[datetime] = mapped_column(default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(default=now_utc, onupdate=now_utc)
 
 
 class Topic(Base):
@@ -155,7 +266,7 @@ class UserModelConfig(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
-    provider: Mapped[str] = mapped_column(String(50), nullable=False)  # kimi/openai/claude/ollama/custom
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)  # kimi/siliconflow/openai/claude/ollama/custom
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     encryption_version: Mapped[int] = mapped_column(default=1)

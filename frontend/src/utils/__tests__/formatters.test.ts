@@ -7,6 +7,7 @@ import {
   formatRelativeTime,
   formatNumber,
   formatStatus,
+  formatTaskStage,
 } from '../formatters';
 
 describe('formatFileSize', () => {
@@ -32,6 +33,11 @@ describe('formatDate', () => {
 
   it('should handle string dates', () => {
     expect(formatDate('2024-04-01T10:30:00')).toMatch(/2024/);
+  });
+
+  it('should handle missing dates', () => {
+    expect(formatDate(undefined)).toBe('未识别日期');
+    expect(formatDate(null)).toBe('未识别日期');
   });
 });
 
@@ -75,6 +81,11 @@ describe('formatRelativeTime', () => {
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     expect(formatRelativeTime(yesterday.toISOString())).toBe('昨天');
   });
+
+  it('should handle missing dates', () => {
+    expect(formatRelativeTime(undefined)).toBe('日期未知');
+    expect(formatRelativeTime(null)).toBe('日期未知');
+  });
 });
 
 describe('formatNumber', () => {
@@ -91,5 +102,12 @@ describe('formatStatus', () => {
     expect(formatStatus('processing')).toBe('处理中');
     expect(formatStatus('completed')).toBe('已完成');
     expect(formatStatus('error')).toBe('出错');
+  });
+});
+
+describe('formatTaskStage', () => {
+  it('should format queued stages correctly', () => {
+    expect(formatTaskStage('queued')).toBe('排队等待');
+    expect(formatTaskStage('pending')).toBe('等待处理');
   });
 });

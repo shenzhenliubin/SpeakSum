@@ -1,6 +1,6 @@
 # MSW Mock 服务
 
-基于 OpenAPI 规范生成的 Mock 数据，用于前端开发和测试。
+基于当前 `content / summary / quotes / domains` 主模型提供的前端 Mock 数据。
 
 ## 环境变量
 
@@ -12,27 +12,30 @@
 ## Mock 端点
 
 ### 上传相关
-- `POST /api/v1/upload` - 上传会议文件
+- `POST /api/v1/upload` - 上传内容文件
 - `GET /api/v1/upload/:task_id/status` - 查询处理进度（轮询）
-- `GET /api/v1/upload/:task_id/stream` - SSE 实时推送进度
+- `GET /api/v1/process/:task_id/stream` - SSE 实时推送进度
 
-### 会议相关
-- `GET /api/v1/meetings` - 获取会议列表（支持分页、搜索）
-- `GET /api/v1/meetings/:meeting_id` - 获取会议详情
-- `DELETE /api/v1/meetings/:meeting_id` - 删除会议
-
-### 发言相关
-- `GET /api/v1/meetings/:meeting_id/speeches` - 获取某会议的发言列表
-- `GET /api/v1/speeches/:speech_id` - 获取发言详情
-- `PATCH /api/v1/speeches/:speech_id` - 更新发言
+### 内容相关
+- `GET /api/v1/contents` - 获取内容列表（支持分页、搜索）
+- `GET /api/v1/contents/:content_id` - 获取内容详情
+- `DELETE /api/v1/contents/:content_id` - 删除内容
+- `PATCH /api/v1/contents/:content_id/summary` - 更新发言总结
+- `PATCH /api/v1/contents/:content_id/quotes/:quote_id` - 更新思想金句
+- `DELETE /api/v1/contents/:content_id/quotes/:quote_id` - 删除思想金句
 
 ### 知识图谱相关
 - `GET /api/v1/knowledge-graph` - 获取知识图谱数据
-- `GET /api/v1/knowledge-graph/topics/:topic_id/speeches` - 获取某话题下的发言
+- `GET /api/v1/knowledge-graph/domains/:domain_id` - 获取某领域下的思想金句
 
 ### 设置相关
 - `GET /api/v1/settings/model` - 获取模型配置列表
 - `PUT /api/v1/settings/model` - 更新模型配置
+- `POST /api/v1/settings/model/test` - 测试模型连接
+- `GET /api/v1/speaker-identities` - 获取说话人身份列表
+- `POST /api/v1/speaker-identities` - 新增说话人身份
+- `PUT /api/v1/speaker-identities/:identity_id` - 更新说话人身份
+- `DELETE /api/v1/speaker-identities/:identity_id` - 删除说话人身份
 
 ## 使用方式
 

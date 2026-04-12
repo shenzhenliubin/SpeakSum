@@ -34,10 +34,15 @@ class MeetingResponse(BaseModel):
     file_size: int
     status: str
     error_message: str | None = None
+    context_summary: str | None = None
+    key_quotes: list[str] | None = None
+    ignored_reason: str | None = None
     speech_count: int = 0
+    viewpoint_count: int = 0
     created_at: datetime
     updated_at: datetime
     speeches: list["SpeechResponse"] | None = None
+    viewpoints: list["ViewpointResponse"] | None = None
 
 
 class MeetingList(BaseModel):
@@ -84,6 +89,180 @@ class SpeechUpdate(BaseModel):
         return v
 
 
+class ViewpointResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    meeting_id: str
+    user_id: str
+    sequence_number: int
+    content: str
+    topics: list[str] | None
+    confidence: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class QuoteResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    content_id: str
+    sequence_number: int
+    text: str
+    domain_ids: list[str] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class ContentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    user_id: str
+    title: str
+    source_type: str
+    content_date: date | None
+    source_file_name: str | None = None
+    source_file_path: str | None = None
+    source_file_size: int | None = None
+    file_type: str | None = None
+    status: str
+    ignored_reason: str | None = None
+    error_message: str | None = None
+    summary_text: str | None = None
+    quotes: list[QuoteResponse] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+
+
+class ContentList(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    items: list[ContentResponse]
+
+
+class ViewpointUpdate(BaseModel):
+    content: str | None = None
+    topics: list[str] | None = None
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("content must not be empty")
+        return normalized
+
+    @field_validator("topics")
+    @classmethod
+    def normalize_topics(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return value
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for topic in value:
+            item = str(topic).strip()
+            if not item or item in seen:
+                continue
+            seen.add(item)
+            normalized.append(item)
+        return normalized
+
+
+class MeetingKeyQuotesUpdate(BaseModel):
+    key_quotes: list[str]
+
+    @field_validator("key_quotes")
+    @classmethod
+    def normalize_quotes(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for quote in value:
+            item = str(quote).strip()
+            if not item:
+                continue
+            normalized.append(item)
+        return normalized
+
+
+class MeetingKeyQuotesResponse(BaseModel):
+    key_quotes: list[str]
+
+
+class ContentSummaryUpdate(BaseModel):
+    summary_text: str
+
+    @field_validator("summary_text")
+    @classmethod
+    def validate_summary_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("summary_text must not be empty")
+        return normalized
+
+
+class QuoteUpdate(BaseModel):
+    text: str | None = None
+    domain_ids: list[str] | None = None
+
+    @field_validator("text")
+    @classmethod
+    def validate_quote_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("text must not be empty")
+        return normalized
+
+    @field_validator("domain_ids")
+    @classmethod
+    def normalize_domain_ids(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return value
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for domain_id in value:
+            item = str(domain_id).strip()
+            if not item or item in seen:
+                continue
+            seen.add(item)
+            normalized.append(item)
+        if not normalized:
+            raise ValueError("domain_ids must contain at least one domain")
+        return normalized
+
+
+class DomainResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    display_name: str
+    description: str | None = None
+    is_system_default: bool
+    sort_order: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class GraphDomainQuoteResponse(BaseModel):
+    id: str
+    content_id: str
+    text: str
+    domain_ids: list[str] = Field(default_factory=list)
+
+
+class GraphDomainDetailResponse(BaseModel):
+    domain: DomainResponse
+    quotes: list[GraphDomainQuoteResponse] = Field(default_factory=list)
+    total: int = 0
+
+
 class TopicResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -96,6 +275,13 @@ class TopicResponse(BaseModel):
     last_appearance: date | None
     created_at: datetime
     updated_at: datetime
+
+
+class TopicDetailResponse(BaseModel):
+    topic: TopicResponse
+    speeches: list["SpeechResponse"] = Field(default_factory=list)
+    viewpoints: list["ViewpointResponse"] = Field(default_factory=list)
+    total: int = 0
 
 
 class TopicCreate(BaseModel):
@@ -126,17 +312,19 @@ class ProcessingStatus(BaseModel):
     stage: str | None = None
     percent: int = Field(0, ge=0, le=100)
     message: str | None = None
+    content_id: str | None = None
     meeting_id: str | None = None
     error_message: str | None = None
 
 
 class KnowledgeGraphNode(BaseModel):
     id: str
-    type: str  # topic/speech
+    type: str
     label: str
     x: float = 0.0
     y: float = 0.0
     size: float | None = None
+    item_count: int = 0
 
 
 class KnowledgeGraphEdge(BaseModel):
@@ -149,6 +337,7 @@ class KnowledgeGraphEdge(BaseModel):
 class KnowledgeGraphData(BaseModel):
     nodes: list[KnowledgeGraphNode]
     edges: list[KnowledgeGraphEdge]
+    layout_version: str = "1"
 
 
 class ModelConfigCreate(BaseModel):
@@ -176,6 +365,21 @@ class ModelConfigResponse(BaseModel):
     encryption_version: int
     created_at: datetime
     updated_at: datetime
+
+
+class ModelConfigTestRequest(BaseModel):
+    config_id: str | None = None
+    provider: str = Field(..., min_length=1, max_length=50)
+    api_key: str | None = Field(None, max_length=500)
+    base_url: str | None = Field(None, max_length=500)
+    default_model: str = Field(..., min_length=1, max_length=100)
+
+
+class ModelConfigTestResponse(BaseModel):
+    success: bool
+    message: str
+    provider: str
+    model: str
 
 
 class SpeakerIdentityCreate(BaseModel):

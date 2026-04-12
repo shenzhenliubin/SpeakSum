@@ -16,6 +16,7 @@ class Settings(BaseSettings):
 
     # Default LLM API keys (optional, user configs preferred)
     KIMI_API_KEY: str | None = None
+    SILICONFLOW_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
     CLAUDE_API_KEY: str | None = None
 

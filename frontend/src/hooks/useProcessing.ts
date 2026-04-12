@@ -1,72 +1,82 @@
-import { useMemo, useRef, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+
 import { uploadApi } from '@/services/uploadApi';
 import type { ProgressEvent } from '@/types';
+import { invalidateProcessedContentQueries } from '@/utils/queryInvalidation';
 
-const PROCESSING_KEY = 'processing';
-const STUCK_TIMEOUT_MS = 60_000; // 60s - show warning
-const ERROR_TIMEOUT_MS = 120_000; // 120s - treat as error
+const STUCK_TIMEOUT_MS = 60_000;
+const ERROR_TIMEOUT_MS = 120_000;
+const CONNECTION_ERROR_MESSAGE = '进度连接已断开，请刷新后重试';
 
-// Polling hook - polls every 2s until task is done, derives state from query data
 export const useProcessing = (taskId: string | undefined) => {
-  const pollingStartRef = useRef<number>(Date.now());
-  const lastProgressRef = useRef<number>(0);
-  const stuckNotifiedRef = useRef<boolean>(false);
+  const queryClient = useQueryClient();
+  const [progress, setProgress] = useState<ProgressEvent | null>(null);
+  const [isInitializing, setIsInitializing] = useState(Boolean(taskId));
+  const [now, setNow] = useState(Date.now());
+  const lastUpdateRef = useRef<number>(Date.now());
 
-  // Reset tracking when taskId changes
   useEffect(() => {
-    if (taskId) {
-      pollingStartRef.current = Date.now();
-      lastProgressRef.current = 0;
-      stuckNotifiedRef.current = false;
+    if (!taskId) {
+      setProgress(null);
+      setIsInitializing(false);
+      return;
     }
-  }, [taskId]);
 
-  const { data: pollData, isLoading } = useQuery({
-    queryKey: [PROCESSING_KEY, taskId],
-    queryFn: () => uploadApi.getTaskStatus(taskId!),
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      if (data?.status === 'completed' || data?.status === 'failed') {
-        return false;
-      }
-      return 2000;
-    },
-    enabled: !!taskId,
-  });
+    setProgress(null);
+    setIsInitializing(true);
+    lastUpdateRef.current = Date.now();
 
-  const progress = useMemo<ProgressEvent | null>(() => {
-    if (!pollData) return null;
-    // Track progress changes to detect stuck tasks
-    if (pollData.progress > lastProgressRef.current) {
-      lastProgressRef.current = pollData.progress;
-      pollingStartRef.current = Date.now(); // Reset timer on progress
-    }
-    return {
-      task_id: pollData.task_id,
-      meeting_id: pollData.meeting_id,
-      status: pollData.status,
-      progress: pollData.progress,
-      current_step: pollData.current_step,
-      error_message: pollData.error_message || undefined,
-    };
-  }, [pollData]);
+    const eventSource = uploadApi.createSSEConnection(
+      taskId,
+      (event) => {
+        lastUpdateRef.current = Date.now();
+        setProgress(event);
+        setIsInitializing(false);
+        if (event.status === 'completed' || event.status === 'ignored' || event.status === 'failed') {
+          invalidateProcessedContentQueries(queryClient, event.content_id || undefined);
+        }
+      },
+      () => {
+        setIsInitializing(false);
+        setProgress((current) => {
+          if (current?.status === 'completed' || current?.status === 'failed' || current?.status === 'ignored') {
+            return current;
+          }
+          return {
+            task_id: taskId,
+            content_id: current?.content_id || '',
+            status: 'failed',
+            progress: current?.progress || 0,
+            current_step: current?.current_step || 'error',
+            message: current?.message || null,
+            error_message: current?.error_message || CONNECTION_ERROR_MESSAGE,
+          };
+        });
+      },
+    );
 
-  // Detect stuck tasks
-  const elapsed = Date.now() - pollingStartRef.current;
+    return () => eventSource.close();
+  }, [queryClient, taskId]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const elapsed = now - lastUpdateRef.current;
   const isStuck = !progress?.error_message
     && progress?.status === 'pending'
-    && elapsed > STUCK_TIMEOUT_MS
-    && !stuckNotifiedRef.current;
+    && elapsed > STUCK_TIMEOUT_MS;
   const isTimedOut = !progress?.error_message
     && (progress?.status === 'pending' || progress?.status === 'processing')
-    && elapsed > ERROR_TIMEOUT_MS
-    && progress.progress === lastProgressRef.current;
+    && elapsed > ERROR_TIMEOUT_MS;
 
   return {
     progress,
-    isLoading: isLoading || progress?.status === 'processing' || progress?.status === 'pending',
+    isLoading: !!taskId && (isInitializing || progress?.status === 'processing' || progress?.status === 'pending'),
     isComplete: progress?.status === 'completed',
+    isIgnored: progress?.status === 'ignored',
     isError: progress?.status === 'failed' || isTimedOut,
     isStuck,
     errorMessage: isTimedOut

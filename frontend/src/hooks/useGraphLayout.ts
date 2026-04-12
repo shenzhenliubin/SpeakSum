@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { graphApi } from '@/services/graphApi';
-import type { GraphLayout, Speech, Topic } from '@/types';
+import type { GraphDomainDetail, GraphLayout } from '@/types';
 
 // Get graph layout
 // GET /api/v1/knowledge-graph
@@ -12,13 +12,12 @@ export function useGraphLayout() {
   });
 }
 
-// Get speeches for a topic
-// GET /api/v1/knowledge-graph/topics/{topic_id}/speeches
-export function useTopicSpeeches(topicId: string | undefined) {
-  return useQuery<{ topic: Topic; speeches: Speech[]; total: number }>({
-    queryKey: ['graph', 'topic', topicId, 'speeches'],
-    queryFn: () => graphApi.getTopicSpeeches(topicId!),
-    enabled: !!topicId,
+// Get domain details for a selected graph domain
+export function useDomainDetails(domainId: string | undefined) {
+  return useQuery<GraphDomainDetail>({
+    queryKey: ['graph', 'domain', domainId, 'details'],
+    queryFn: () => graphApi.getDomainDetails(domainId!),
+    enabled: !!domainId,
     staleTime: 5 * 60 * 1000,
   });
 }

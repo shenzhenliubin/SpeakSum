@@ -201,24 +201,48 @@ def extract_speeches(text: str, target_speaker: str) -> list[dict[str, Any]]:
     return speeches
 
 
-# Date extraction patterns from transcript content
+# Date extraction patterns from transcript content / file name
 DATE_PATTERNS = [
     re.compile(r"创建时间[：:]\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2})"),
     re.compile(r"(\d{4}[-/]\d{1,2}[-/]\d{1,2})\s*\d{1,2}:\d{2}"),
     re.compile(r"日期[：:]\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2})"),
+    re.compile(r"会议日期[：:]\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2})"),
+    re.compile(r"(\d{4}年\d{1,2}月\d{1,2}日)"),
 ]
+FILENAME_DATE_PATTERN = re.compile(r"(?<!\d)(\d{4}[-_/]\d{1,2}[-_/]\d{1,2})(?!\d)")
 
 
-def extract_meeting_date(text: str) -> date | None:
-    """Extract meeting date from transcript content."""
+def _parse_date_candidate(raw: str) -> date | None:
     from datetime import datetime as dt
 
+    normalized = (
+        raw.strip()
+        .replace("/", "-")
+        .replace("_", "-")
+        .replace("年", "-")
+        .replace("月", "-")
+        .replace("日", "")
+    )
+
+    try:
+        return dt.strptime(normalized, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def extract_meeting_date(text: str, source_name: str | None = None) -> date | None:
+    """Extract meeting date from transcript content, then fall back to file name."""
     for pattern in DATE_PATTERNS:
         match = pattern.search(text)
+        if not match:
+            continue
+        parsed = _parse_date_candidate(match.group(1))
+        if parsed:
+            return parsed
+
+    if source_name:
+        match = FILENAME_DATE_PATTERN.search(Path(source_name).name)
         if match:
-            date_str = match.group(1).replace("/", "-")
-            try:
-                return dt.strptime(date_str, "%Y-%m-%d").date()
-            except ValueError:
-                continue
+            return _parse_date_candidate(match.group(1))
+
     return None

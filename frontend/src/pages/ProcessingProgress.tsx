@@ -4,24 +4,35 @@ import { Button, Card, Progress, Steps, Alert, Space } from 'antd';
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
+  InfoCircleOutlined,
   ArrowLeftOutlined,
   HomeOutlined,
   FileTextOutlined,
   ReloadOutlined,
 } from '@ant-design/icons';
+
 import { useProcessing } from '@/hooks/useProcessing';
 import { LoadingState } from '@/components/common/LoadingState';
 import { formatTaskStage } from '@/utils/formatters';
 import type { TaskStage } from '@/types';
 
-const stages: TaskStage[] = ['parsing', 'extracting', 'cleaning', 'tagging', 'building_graph'];
+const stages: TaskStage[] = ['parsing', 'identifying_speaker', 'summarizing', 'extracting_quotes', 'building_graph'];
 
 const stageDescriptions: Record<TaskStage, string> = {
-  parsing: '读取并解析会议文件内容',
-  extracting: '识别并提取你的发言',
-  cleaning: '使用 AI 清理口语表达和重复内容',
-  tagging: '提取话题标签和金句',
-  building_graph: '构建知识图谱关联关系',
+  queued: '前序文件处理中，当前文件排队等待中',
+  pending: '任务已创建，等待工作进程开始处理',
+  parsing: '读取并解析源文件内容',
+  identifying_speaker: '会议纪要中提取刘彬发言',
+  summarizing: '生成客观的发言总结',
+  extracting_quotes: '提炼思想金句并归类领域',
+  building_graph: '更新领域知识图谱',
+  ignored: '未检测到刘彬发言，因此未生成记录',
+  error: '处理失败',
+  understanding_context: '理解背景信息',
+  extracting_viewpoints: '提炼观点',
+  extracting: '提取发言',
+  cleaning: '清理口语',
+  tagging: '提取话题',
 };
 
 export const ProcessingProgress: React.FC = () => {
@@ -29,17 +40,16 @@ export const ProcessingProgress: React.FC = () => {
   const navigate = useNavigate();
   const [elapsedTime, setElapsedTime] = useState(0);
 
-  const { progress, isLoading, isComplete, isError, isStuck, errorMessage } = useProcessing(taskId);
+  const { progress, isLoading, isComplete, isIgnored, isError, isStuck, errorMessage } = useProcessing(taskId);
 
-  // Timer for elapsed time
   useEffect(() => {
-    if (!isComplete && !isError) {
+    if (!isComplete && !isIgnored && !isError) {
       const timer = setInterval(() => {
         setElapsedTime((prev) => prev + 1);
       }, 1000);
       return () => clearInterval(timer);
     }
-  }, [isComplete, isError]);
+  }, [isComplete, isIgnored, isError]);
 
   const formatElapsedTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -87,15 +97,39 @@ export const ProcessingProgress: React.FC = () => {
             <CheckCircleOutlined className="text-6xl text-status-success mb-4" />
             <h2 className="text-xl font-semibold text-text-primary mb-2">处理完成！</h2>
             <p className="text-text-secondary mb-6">
-              会议已成功处理，你的发言已添加到知识图谱中
+              内容已成功处理，发言总结、思想金句和领域图谱都已生成
             </p>
             <Space>
               <Button
                 type="primary"
                 icon={<FileTextOutlined />}
-                onClick={() => navigate('/timeline')}
+                onClick={() => navigate(progress?.content_id ? `/timeline/${progress.content_id}` : '/timeline')}
               >
-                查看会议
+                查看内容
+              </Button>
+              <Button icon={<HomeOutlined />} onClick={() => navigate('/')}>
+                返回首页
+              </Button>
+            </Space>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  if (isIgnored) {
+    return (
+      <div className="max-w-2xl mx-auto">
+        <Card>
+          <div className="text-center py-8">
+            <InfoCircleOutlined className="text-6xl text-text-secondary mb-4" />
+            <h2 className="text-xl font-semibold text-text-primary mb-2">已忽略</h2>
+            <p className="text-text-secondary mb-6">
+              {progress?.message || '未检测到刘彬发言，因此未生成记录'}
+            </p>
+            <Space>
+              <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/upload')}>
+                返回上传
               </Button>
               <Button icon={<HomeOutlined />} onClick={() => navigate('/')}>
                 返回首页
@@ -114,7 +148,6 @@ export const ProcessingProgress: React.FC = () => {
       </Button>
 
       <Card title="处理进度">
-        {/* Overall Progress */}
         <div className="mb-8">
           <div className="flex items-center justify-between mb-2">
             <span className="text-text-primary font-medium">总体进度</span>
@@ -129,7 +162,6 @@ export const ProcessingProgress: React.FC = () => {
           />
         </div>
 
-        {/* Processing Steps */}
         <Steps
           direction="vertical"
           current={getCurrentStep()}
@@ -139,7 +171,6 @@ export const ProcessingProgress: React.FC = () => {
           }))}
         />
 
-        {/* Stuck Warning */}
         {isStuck && (
           <Alert
             message="处理时间较长"
@@ -155,14 +186,13 @@ export const ProcessingProgress: React.FC = () => {
           />
         )}
 
-        {/* Status Alert */}
         <Alert
           message={
             progress?.current_step
               ? `正在${formatTaskStage(progress.current_step as TaskStage)}...`
               : '等待开始处理...'
           }
-          description="请保持页面打开，处理完成后会自动跳转"
+          description={progress?.message || '请保持页面打开，处理完成后会自动更新'}
           type="info"
           showIcon
           className="mt-6"

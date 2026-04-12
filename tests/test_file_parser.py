@@ -1,8 +1,10 @@
 """Tests for file parser service."""
 
+from datetime import date
+
 import pytest
 
-from speaksum.services.file_parser import extract_speeches, parse_file, parse_txt
+from speaksum.services.file_parser import extract_meeting_date, extract_speeches, parse_file, parse_txt
 
 
 def test_extract_speeches_simple() -> None:
@@ -129,3 +131,15 @@ def test_extract_speeches_empty_content() -> None:
 
     speeches = extract_speeches("   \n\n   ", target_speaker="我")
     assert len(speeches) == 0
+
+
+def test_extract_meeting_date_from_text() -> None:
+    assert extract_meeting_date("创建时间：2026-03-14 10:00") == date(2026, 3, 14)
+
+
+def test_extract_meeting_date_from_filename_fallback() -> None:
+    assert extract_meeting_date("", "数字化决策委员会专题会议-2021-09-21.docx") == date(2021, 9, 21)
+
+
+def test_extract_meeting_date_supports_chinese_date_format() -> None:
+    assert extract_meeting_date("会议日期：2021年9月21日") == date(2021, 9, 21)

@@ -1,4 +1,18 @@
-# 后端设计 Review 报告
+# 后端设计 Review 报告（历史归档）
+
+> 归档说明
+>
+> 本文档审查的是已经退场的旧后端设计，核心对象仍是 `meetings / speeches / topics` 与中间态的 `viewpoint` 方案，不代表当前系统实现。
+>
+> 当前有效设计与实现请以以下文档为准：
+> - `docs/PRODUCT_DESIGN.md`
+> - `docs/TECH_ARCHITECTURE.md`
+> - `docs/TECH_DESIGN.md`
+> - `docs/FRONTEND_DESIGN.md`
+> - `docs/backend-impl-design.md`
+> - `docs/openapi.yaml`
+>
+> 下文保留为历史评审记录，用于追溯旧方案的设计判断与问题清单。
 
 **Review 日期**: 2026-04-03  
 **Review 文档**: `docs/backend-impl-design.md`（位于 `feature-backend-impl` 分支）  

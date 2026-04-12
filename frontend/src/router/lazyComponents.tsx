@@ -18,8 +18,6 @@ import SettingsComp from '@/pages/Settings';
 // @ts-ignore
 import ModelSettingsComp from '@/pages/settings/ModelSettings';
 // @ts-ignore
-import IdentitySettingsComp from '@/pages/settings/IdentitySettings';
-// @ts-ignore
 import GeneralSettingsComp from '@/pages/settings/GeneralSettings';
 // @ts-ignore
 import LoginComp from '@/pages/Login';
@@ -34,7 +32,6 @@ export const Upload = UploadComp;
 export const ProcessingProgress = ProcessingProgressComp;
 export const Settings = SettingsComp;
 export const ModelSettings = ModelSettingsComp;
-export const IdentitySettings = IdentitySettingsComp;
 export const GeneralSettings = GeneralSettingsComp;
 export const Login = LoginComp;
 export const NotFound = NotFoundComp;

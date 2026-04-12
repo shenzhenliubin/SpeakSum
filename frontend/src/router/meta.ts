@@ -2,19 +2,19 @@
 export const routeMeta: Record<string, { title: string; description: string }> = {
   '/': {
     title: '首页 - SpeakSum',
-    description: '让每一次会议发言都成为你知识图谱的一个节点',
+    description: '让每一次发言、文章或文本都成为你的长期思想沉淀',
   },
   '/timeline': {
-    title: '会议时间线 - SpeakSum',
-    description: '按时间查看所有会议发言',
+    title: '思想记录 - SpeakSum',
+    description: '按时间查看所有发言总结与思想金句',
   },
   '/graph': {
     title: '知识图谱 - SpeakSum',
-    description: '可视化探索话题关联',
+    description: '按领域可视化探索思想金句的聚合关系',
   },
   '/upload': {
-    title: '上传会议 - SpeakSum',
-    description: '上传会议纪要文件',
+    title: '上传内容 - SpeakSum',
+    description: '上传会议纪要或其他文本',
   },
   '/settings': {
     title: '设置 - SpeakSum',

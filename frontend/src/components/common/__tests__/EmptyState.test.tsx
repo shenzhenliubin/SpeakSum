@@ -6,7 +6,7 @@ describe('EmptyState', () => {
   it('should render noData type correctly', () => {
     render(<EmptyState type="noData" />);
     expect(screen.getByText('暂无数据')).toBeInTheDocument();
-    expect(screen.getByText('还没有任何会议记录，上传第一份会议纪要开始吧')).toBeInTheDocument();
+    expect(screen.getByText('还没有任何内容记录，上传第一份会议纪要或其他文本开始吧')).toBeInTheDocument();
   });
 
   it('should render noSearchResult type correctly', () => {
@@ -30,7 +30,7 @@ describe('EmptyState', () => {
   it('should render emptyGraph type correctly', () => {
     render(<EmptyState type="emptyGraph" />);
     expect(screen.getByText('知识图谱为空')).toBeInTheDocument();
-    expect(screen.getByText('上传会议并处理后，你的知识岛屿将在这里呈现')).toBeInTheDocument();
+    expect(screen.getByText('上传内容并处理后，你的领域图谱会在这里逐步生长')).toBeInTheDocument();
   });
 
   it('should render action button when provided', () => {
@@ -39,12 +39,12 @@ describe('EmptyState', () => {
       <EmptyState
         type="noData"
         action={{
-          label: '上传会议',
+          label: '上传内容',
           onClick: handleClick,
         }}
       />
     );
-    const button = screen.getByText('上传会议');
+    const button = screen.getByText('上传内容');
     expect(button).toBeInTheDocument();
     fireEvent.click(button);
     expect(handleClick).toHaveBeenCalledTimes(1);

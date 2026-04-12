@@ -1,65 +1,16 @@
-import { Button, Avatar, Dropdown, Space, Badge, Empty } from 'antd';
+import { Button, Avatar, Dropdown, Space } from 'antd';
 import {
   UploadOutlined,
   UserOutlined,
   SettingOutlined,
   LogoutOutlined,
-  BellOutlined,
 } from '@ant-design/icons';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
-import { useUIStore } from '@/stores/uiStore';
 
 export const Header: React.FC = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
-  const { notifications, removeNotification } = useUIStore();
-
-  const unreadCount = notifications.filter((n) => !n.read).length;
-
-  const notificationMenuItems = notifications.length
-    ? [
-        ...notifications.map((n) => ({
-          key: n.id,
-          label: (
-            <div className="max-w-xs flex items-center gap-2">
-              <span
-                className={
-                  n.type === 'error'
-                    ? 'text-status-error'
-                    : n.type === 'success'
-                    ? 'text-status-success'
-                    : n.type === 'warning'
-                    ? 'text-status-warning'
-                    : 'text-blue-500'
-                }
-              >
-                ●
-              </span>
-              <span className="truncate">{n.message}</span>
-            </div>
-          ),
-          onClick: () => removeNotification(n.id),
-        })),
-        { type: 'divider' as const },
-        {
-          key: 'clear',
-          label: '清空全部通知',
-          danger: true,
-          onClick: () => notifications.forEach((n) => removeNotification(n.id)),
-        },
-      ]
-    : [
-        {
-          key: 'empty',
-          label: (
-            <div className="py-2 px-4 text-center text-text-secondary">
-              暂无通知
-            </div>
-          ),
-          disabled: true,
-        },
-      ];
 
   const userMenuItems = [
     {
@@ -87,7 +38,7 @@ export const Header: React.FC = () => {
   ];
 
   return (
-    <header className="h-[72px] bg-bg-panel border-b border-line-default px-6 flex items-center justify-between sticky top-0 z-50">
+    <header className="sticky top-0 z-50 flex h-[72px] min-h-[72px] max-h-[72px] shrink-0 items-center justify-between border-b border-line-default bg-bg-panel px-6">
       {/* Logo */}
       <Link to="/" className="flex items-center gap-3">
         <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-terracotta to-terracotta-deep flex items-center justify-center">
@@ -107,7 +58,7 @@ export const Header: React.FC = () => {
           onClick={() => navigate('/upload')}
           className="hidden sm:flex items-center"
         >
-          上传会议
+          上传内容
         </Button>
 
         {/* Mobile Upload Button */}
@@ -117,17 +68,6 @@ export const Header: React.FC = () => {
           onClick={() => navigate('/upload')}
           className="sm:hidden flex items-center justify-center w-10 h-10 p-0"
         />
-
-        {/* Notifications */}
-        <Dropdown menu={{ items: notificationMenuItems }} placement="bottomRight" arrow>
-          <Badge count={unreadCount} size="small">
-            <Button
-              type="text"
-              icon={<BellOutlined />}
-              className="text-text-secondary"
-            />
-          </Badge>
-        </Dropdown>
 
         {/* User Menu */}
         <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">

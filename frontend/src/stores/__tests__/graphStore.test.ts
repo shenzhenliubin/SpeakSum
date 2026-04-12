@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useGraphStore } from '../graphStore';
-import type { Topic, Speech, GraphLayout } from '@/types';
+import type { GraphNode, GraphLayout } from '@/types';
 
 describe('graphStore', () => {
   beforeEach(() => {
@@ -8,7 +8,6 @@ describe('graphStore', () => {
     const store = useGraphStore.getState();
     store.resetView();
     store.selectTopic(null);
-    store.selectSpeech(null);
   });
 
   it('should have correct initial state', () => {
@@ -16,7 +15,6 @@ describe('graphStore', () => {
     expect(state.zoom).toBe(1);
     expect(state.pan).toEqual({ x: 0, y: 0 });
     expect(state.selectedTopic).toBeNull();
-    expect(state.selectedSpeech).toBeNull();
     expect(state.isLoading).toBe(false);
   });
 
@@ -26,13 +24,11 @@ describe('graphStore', () => {
       nodes: [
         {
           id: '1',
-          name: 'Test Topic',
-          count: 5,
-          meeting_count: 2,
-          first_appearance: new Date().toISOString(),
-          last_appearance: new Date().toISOString(),
+          type: 'topic',
+          label: 'Test Topic',
           x: 100,
           y: 100,
+          size: 24,
         },
       ],
       edges: [],
@@ -46,40 +42,15 @@ describe('graphStore', () => {
 
   it('should select topic', () => {
     const store = useGraphStore.getState();
-    const mockTopic: Topic = {
+    const mockTopic: GraphNode = {
       id: '1',
-      name: 'Test Topic',
-      count: 5,
-      meeting_count: 2,
-      first_appearance: new Date().toISOString(),
-      last_appearance: new Date().toISOString(),
+      type: 'topic',
+      label: 'Test Topic',
     };
 
     store.selectTopic(mockTopic);
 
     expect(useGraphStore.getState().selectedTopic).toEqual(mockTopic);
-    expect(useGraphStore.getState().selectedSpeech).toBeNull();
-  });
-
-  it('should select speech', () => {
-    const store = useGraphStore.getState();
-    const mockSpeech: Speech = {
-      id: '1',
-      meeting_id: 'm1',
-      timestamp: '10:30:00',
-      speaker: 'Test User',
-      raw_text: 'Raw text',
-      cleaned_text: 'Cleaned text',
-      key_quotes: [],
-      topics: ['topic1'],
-      sentiment: 'neutral',
-      word_count: 10,
-      created_at: new Date().toISOString(),
-    };
-
-    store.selectSpeech(mockSpeech);
-
-    expect(useGraphStore.getState().selectedSpeech).toEqual(mockSpeech);
   });
 
   it('should set zoom within bounds', () => {

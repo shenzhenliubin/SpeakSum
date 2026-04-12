@@ -104,21 +104,28 @@ describe('Constants', () => {
 
   describe('Settings Tabs', () => {
     it('should have correct settings tabs', () => {
-      expect(SETTINGS_TABS.length).toBe(3);
+      expect(SETTINGS_TABS.length).toBe(2);
       expect(SETTINGS_TABS.map((tab) => tab.key)).toContain('models');
-      expect(SETTINGS_TABS.map((tab) => tab.key)).toContain('identities');
       expect(SETTINGS_TABS.map((tab) => tab.key)).toContain('general');
     });
   });
 
   describe('Model Providers', () => {
     it('should have correct model providers', () => {
-      expect(MODEL_PROVIDERS.length).toBe(5);
+      expect(MODEL_PROVIDERS.length).toBe(6);
       expect(MODEL_PROVIDERS.map((p) => p.value)).toContain('kimi');
+      expect(MODEL_PROVIDERS.map((p) => p.value)).toContain('siliconflow');
       expect(MODEL_PROVIDERS.map((p) => p.value)).toContain('openai');
       expect(MODEL_PROVIDERS.map((p) => p.value)).toContain('claude');
       expect(MODEL_PROVIDERS.map((p) => p.value)).toContain('ollama');
       expect(MODEL_PROVIDERS.map((p) => p.value)).toContain('custom');
+    });
+
+    it('should expose recommended models for siliconflow', () => {
+      const provider = MODEL_PROVIDERS.find((item) => item.value === 'siliconflow');
+      expect(provider).toBeDefined();
+      expect(provider?.recommendedModels).toContain('deepseek-ai/DeepSeek-V3');
+      expect(provider?.recommendedModels).toContain('deepseek-ai/DeepSeek-R1');
     });
   });
 

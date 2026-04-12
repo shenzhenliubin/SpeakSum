@@ -36,3 +36,7 @@ Object.defineProperty(window, 'matchMedia', {
     dispatchEvent: vi.fn(),
   })),
 })
+
+window.getComputedStyle = vi.fn().mockImplementation(() => ({
+  getPropertyValue: vi.fn(() => ''),
+}))

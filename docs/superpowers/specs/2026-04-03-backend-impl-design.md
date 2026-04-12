@@ -1,4 +1,15 @@
-# SpeakSum 后端实现设计文档
+# SpeakSum 后端实现设计文档（历史归档）
+
+> Archive note
+>
+> This spec captures the retired backend design for the early `meetings / speeches / topics` architecture. It is preserved for implementation history only.
+>
+> Current source of truth:
+> - `docs/PRODUCT_DESIGN.md`
+> - `docs/TECH_ARCHITECTURE.md`
+> - `docs/TECH_DESIGN.md`
+> - `docs/backend-impl-design.md`
+> - `docs/openapi.yaml`
 
 **文档版本**: 1.1  
 **日期**: 2026-04-03  

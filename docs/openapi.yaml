@@ -1,77 +1,118 @@
 openapi: 3.0.3
 info:
   title: SpeakSum API
+  version: 2.0.0
   description: |
-    SpeakSum 会议纪要智能处理系统 API
+    SpeakSum 当前运行中的接口契约。
 
-    前后端联调契约文档 - 开发时请以此为准
-  version: 1.0.0
-  contact:
-    name: SpeakSum Team
+    当前主模型为：
+    - content
+    - summary_text
+    - quotes
+    - domains
+    - domain graph
 
 servers:
-  - url: http://localhost:8000
-    description: 本地开发环境
-  - url: http://localhost:8000/api/v1
-    description: 本地开发环境 (带前缀)
+  - url: http://127.0.0.1:8000
+    description: Local development
 
 security:
   - BearerAuth: []
 
 paths:
-  # ========== 上传相关 ==========
+  /health:
+    get:
+      summary: Health check
+      tags: [System]
+      security: []
+      responses:
+        '200':
+          description: Service health
+
+  /api/v1/auth/login:
+    post:
+      summary: Login
+      tags: [Authentication]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthEnvelope'
+
+  /api/v1/auth/register:
+    post:
+      summary: Register
+      tags: [Authentication]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Register success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthEnvelope'
+
+  /api/v1/auth/me:
+    get:
+      summary: Current user
+      tags: [Authentication]
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserEnvelope'
+
   /api/v1/upload:
     post:
-      summary: 上传会议纪要文件
-      description: |
-        上传会议文件，触发异步处理任务。
-        支持的格式：.txt, .md, .docx
-      tags:
-        - Upload
+      summary: Upload a content file
+      tags: [Upload]
       requestBody:
         required: true
         content:
           multipart/form-data:
             schema:
               type: object
-              required:
-                - file
+              required: [file]
               properties:
                 file:
                   type: string
                   format: binary
-                  description: 会议文件
-                speaker_identity:
+                source_type:
                   type: string
-                  description: 要提取的发言人身份（如"我"）
-                  default: "我"
+                  enum: [meeting_minutes, other_text]
+                  default: meeting_minutes
+                provider:
+                  type: string
+                  description: Model provider to use for processing
       responses:
         '202':
-          description: 已接受，开始处理
+          description: Accepted
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  task_id:
-                    type: string
-                    example: "task_abc123"
-                  meeting_id:
-                    type: string
-                    example: "mtg_xyz789"
-                  status:
-                    type: string
-                    enum: [pending]
-        '400':
-          description: 文件格式错误或文件过大
-        '401':
-          description: 未授权
+                $ref: '#/components/schemas/UploadAccepted'
 
   /api/v1/upload/{task_id}/status:
     get:
-      summary: 查询处理进度（轮询）
-      tags:
-        - Upload
+      summary: Get task status
+      tags: [Upload]
       parameters:
         - name: task_id
           in: path
@@ -80,20 +121,16 @@ paths:
             type: string
       responses:
         '200':
-          description: 当前处理状态
+          description: Task status
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TaskStatus'
+                $ref: '#/components/schemas/ProcessingStatus'
 
-  /api/v1/upload/{task_id}/stream:
+  /api/v1/process/{task_id}/stream:
     get:
-      summary: 实时推送处理进度（SSE）
-      description: |
-        Server-Sent Events 实时推送处理进度
-        前端使用 EventSource 连接
-      tags:
-        - Upload
+      summary: Stream task progress via SSE
+      tags: [Process]
       parameters:
         - name: task_id
           in: path
@@ -102,179 +139,83 @@ paths:
             type: string
       responses:
         '200':
-          description: SSE 流
+          description: Event stream
           content:
             text/event-stream:
               schema:
                 type: string
 
-  # ========== 会议相关 ==========
-  /api/v1/meetings:
+  /api/v1/contents:
     get:
-      summary: 获取会议列表
-      description: 支持分页、搜索
-      tags:
-        - Meetings
+      summary: List contents
+      tags: [Contents]
       parameters:
         - name: q
           in: query
-          description: 搜索关键词（标题、发言人、话题）
           schema:
             type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, processing, completed, ignored, failed, error]
         - name: page
           in: query
-          description: 页码，从1开始
           schema:
             type: integer
             default: 1
         - name: page_size
           in: query
-          description: 每页数量
           schema:
             type: integer
             default: 20
             maximum: 100
-        - name: status
-          in: query
-          description: 按状态筛选
-          schema:
-            type: string
-            enum: [processing, completed, error]
-        - name: sort_by
-          in: query
-          description: 排序字段
-          schema:
-            type: string
-            enum: [created_at, meeting_date, title]
-            default: created_at
-        - name: sort_order
-          in: query
-          schema:
-            type: string
-            enum: [asc, desc]
-            default: desc
       responses:
         '200':
-          description: 会议列表（含分页信息）
+          description: Content list
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/MeetingSummary'
-                  total:
-                    type: integer
-                  page:
-                    type: integer
-                  page_size:
-                    type: integer
-                  total_pages:
-                    type: integer
+                $ref: '#/components/schemas/ContentList'
 
-  /api/v1/meetings/{meeting_id}:
+  /api/v1/contents/{content_id}:
     get:
-      summary: 获取会议详情
-      tags:
-        - Meetings
+      summary: Get content detail
+      tags: [Contents]
       parameters:
-        - name: meeting_id
+        - name: content_id
           in: path
           required: true
           schema:
             type: string
       responses:
         '200':
-          description: 会议详情
+          description: Content detail
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MeetingDetail'
+                $ref: '#/components/schemas/Content'
         '404':
-          description: 会议不存在
-
+          description: Content not found
     delete:
-      summary: 删除会议
-      description: 级联删除该会议下的所有发言
-      tags:
-        - Meetings
+      summary: Delete content
+      tags: [Contents]
       parameters:
-        - name: meeting_id
+        - name: content_id
           in: path
           required: true
           schema:
             type: string
       responses:
         '204':
-          description: 删除成功
-        '404':
-          description: 会议不存在
+          description: Deleted
 
-  # ========== 发言相关 ==========
-  /api/v1/meetings/{meeting_id}/speeches:
-    get:
-      summary: 获取某会议的发言列表
-      tags:
-        - Speeches
-      parameters:
-        - name: meeting_id
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: page
-          in: query
-          schema:
-            type: integer
-            default: 1
-        - name: page_size
-          in: query
-          schema:
-            type: integer
-            default: 50
-      responses:
-        '200':
-          description: 发言列表
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Speech'
-                  total:
-                    type: integer
-
-  /api/v1/speeches/{speech_id}:
-    get:
-      summary: 获取发言详情
-      tags:
-        - Speeches
-      parameters:
-        - name: speech_id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: 发言详情
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Speech'
-
+  /api/v1/contents/{content_id}/summary:
     patch:
-      summary: 更新发言
-      description: 手动修正清理后的文本、话题等
-      tags:
-        - Speeches
+      summary: Update content summary
+      tags: [Contents]
       parameters:
-        - name: speech_id
+        - name: content_id
           in: path
           required: true
           schema:
@@ -284,172 +225,222 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                cleaned_text:
-                  type: string
-                  description: 修正后的清理文本
-                topics:
-                  type: array
-                  items:
-                    type: string
-                  description: 修正后的话题标签
-                key_quotes:
-                  type: array
-                  items:
-                    type: string
-                  description: 修正后的金句
+              $ref: '#/components/schemas/ContentSummaryUpdate'
       responses:
         '200':
-          description: 更新成功
+          description: Updated content
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Speech'
+                $ref: '#/components/schemas/Content'
 
-  # ========== 知识图谱相关 ==========
+  /api/v1/contents/{content_id}/quotes/{quote_id}:
+    patch:
+      summary: Update quote
+      tags: [Contents]
+      parameters:
+        - name: content_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: quote_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteUpdate'
+      responses:
+        '200':
+          description: Updated quote
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quote'
+    delete:
+      summary: Delete quote
+      tags: [Contents]
+      parameters:
+        - name: content_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: quote_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Deleted
+
   /api/v1/knowledge-graph:
     get:
-      summary: 获取知识图谱数据
-      description: 获取当前用户的知识图谱节点和边数据
-      tags:
-        - Knowledge Graph
+      summary: Get domain graph
+      tags: [Knowledge Graph]
       responses:
         '200':
-          description: 图谱数据
+          description: Domain graph
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  nodes:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/TopicNode'
-                  edges:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/TopicEdge'
-                  layout_version:
-                    type: string
-                    description: 布局版本号
+                $ref: '#/components/schemas/KnowledgeGraphData'
 
-  /api/v1/knowledge-graph/topics/{topic_id}/speeches:
+  /api/v1/knowledge-graph/domains/{domain_id}:
     get:
-      summary: 获取某话题下的发言列表
-      tags:
-        - Knowledge Graph
+      summary: Get domain detail
+      tags: [Knowledge Graph]
       parameters:
-        - name: topic_id
+        - name: domain_id
           in: path
           required: true
           schema:
             type: string
-        - name: page
-          in: query
-          schema:
-            type: integer
-            default: 1
-        - name: page_size
-          in: query
-          schema:
-            type: integer
-            default: 20
       responses:
         '200':
-          description: 该话题相关的所有发言
+          description: Domain detail
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  topic:
-                    $ref: '#/components/schemas/TopicNode'
-                  speeches:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Speech'
-                  total:
-                    type: integer
+                $ref: '#/components/schemas/GraphDomainDetail'
+        '404':
+          description: Domain not found
 
-  # ========== 设置相关 ==========
-  /api/v1/settings/model:
-    get:
-      summary: 获取模型配置列表
-      description: 获取用户配置的所有LLM模型
-      tags:
-        - Settings
-      responses:
-        '200':
-          description: 模型配置列表
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  configs:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/ModelConfig'
-                  default_config_id:
-                    type: string
-                    nullable: true
-
-    put:
-      summary: 更新模型配置
-      description: 添加、修改或删除模型配置
-      tags:
-        - Settings
+  /api/v1/knowledge-graph/layout:
+    post:
+      summary: Save graph layout
+      tags: [Knowledge Graph]
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required:
-                - action
-              properties:
-                action:
-                  type: string
-                  enum: [create, update, delete]
-                config_id:
-                  type: string
-                  description: update/delete 时需要
-                config:
-                  type: object
-                  description: create/update 时需要
-                  properties:
-                    provider:
-                      type: string
-                      enum: [kimi, openai, claude, ollama]
-                    name:
-                      type: string
-                      description: 配置名称（如"我的Kimi"）
-                    api_key:
-                      type: string
-                      description: API密钥（加密存储）
-                    base_url:
-                      type: string
-                      description: 自定义API地址（可选）
-                    default_model:
-                      type: string
-                      description: 默认模型（如"gpt-4"）
-                    is_default:
-                      type: boolean
-                      description: 是否设为默认
-                    is_enabled:
-                      type: boolean
-                      description: 是否启用
+              $ref: '#/components/schemas/GraphLayoutSaveRequest'
       responses:
         '200':
-          description: 操作成功
+          description: Saved
+
+  /api/v1/settings/model:
+    get:
+      summary: List model configs
+      tags: [Settings]
+      responses:
+        '200':
+          description: Model configs
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
+                type: array
+                items:
+                  $ref: '#/components/schemas/ModelConfig'
+    put:
+      summary: Replace model configs
+      tags: [Settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/ModelConfigCreate'
+      responses:
+        '200':
+          description: Model configs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ModelConfig'
+
+  /api/v1/settings/model/test:
+    post:
+      summary: Test model config
+      tags: [Settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModelConfigTestRequest'
+      responses:
+        '200':
+          description: Test result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelConfigTestResponse'
+
+  /api/v1/speaker-identities:
+    get:
+      summary: List speaker identities
+      tags: [Speaker Identities]
+      responses:
+        '200':
+          description: Identity list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpeakerIdentityListEnvelope'
+    post:
+      summary: Create speaker identity
+      tags: [Speaker Identities]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpeakerIdentityCreate'
+      responses:
+        '200':
+          description: Created identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpeakerIdentityEnvelope'
+
+  /api/v1/speaker-identities/{identity_id}:
+    put:
+      summary: Update speaker identity
+      tags: [Speaker Identities]
+      parameters:
+        - name: identity_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpeakerIdentityCreate'
+      responses:
+        '200':
+          description: Updated identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpeakerIdentityEnvelope'
+    delete:
+      summary: Delete speaker identity
+      tags: [Speaker Identities]
+      parameters:
+        - name: identity_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Deleted
 
 components:
   securitySchemes:
@@ -457,35 +448,243 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: |
-        JWT Token 认证。
-        MVP阶段测试token可通过 `core/security.py` 预生成。
-        Header 格式: `Authorization: Bearer <token>`
 
   schemas:
-    # ========== 通用 ==========
-    TaskStatus:
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+        name:
+          type: string
+          nullable: true
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    AuthTokenData:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+        user:
+          $ref: '#/components/schemas/User'
+
+    AuthEnvelope:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/AuthTokenData'
+        meta:
+          type: object
+          nullable: true
+        error:
+          type: object
+          nullable: true
+
+    UserEnvelope:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/User'
+        meta:
+          type: object
+          nullable: true
+        error:
+          type: object
+          nullable: true
+
+    UploadAccepted:
       type: object
       properties:
         task_id:
           type: string
-        meeting_id:
+        content_id:
           type: string
         status:
           type: string
-          enum: [pending, processing, completed, failed]
-        progress:
+          enum: [pending]
+
+    ProcessingStatus:
+      type: object
+      properties:
+        task_id:
+          type: string
+        status:
+          type: string
+        stage:
+          type: string
+          nullable: true
+        percent:
           type: integer
-          description: 处理进度百分比 (0-100)
           minimum: 0
           maximum: 100
-        current_step:
+        message:
           type: string
-          description: 当前处理步骤描述
+          nullable: true
+        content_id:
+          type: string
+          nullable: true
+        meeting_id:
+          type: string
+          nullable: true
         error_message:
           type: string
           nullable: true
-          description: 失败时的错误信息
+
+    Quote:
+      type: object
+      properties:
+        id:
+          type: string
+        content_id:
+          type: string
+        sequence_number:
+          type: integer
+        text:
+          type: string
+        domain_ids:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    Content:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        title:
+          type: string
+        source_type:
+          type: string
+          enum: [meeting_minutes, other_text]
+        content_date:
+          type: string
+          format: date
+          nullable: true
+        source_file_name:
+          type: string
+          nullable: true
+        source_file_path:
+          type: string
+          nullable: true
+        source_file_size:
+          type: integer
+          nullable: true
+        file_type:
+          type: string
+          nullable: true
+        status:
+          type: string
+        ignored_reason:
+          type: string
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        summary_text:
+          type: string
+          nullable: true
+        quotes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Quote'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    ContentList:
+      type: object
+      properties:
+        total:
+          type: integer
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total_pages:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Content'
+
+    ContentSummaryUpdate:
+      type: object
+      required: [summary_text]
+      properties:
+        summary_text:
+          type: string
+
+    QuoteUpdate:
+      type: object
+      properties:
+        text:
+          type: string
+        domain_ids:
+          type: array
+          items:
+            type: string
+
+    Domain:
+      type: object
+      properties:
+        id:
+          type: string
+        display_name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        is_system_default:
+          type: boolean
+        sort_order:
+          type: integer
         created_at:
           type: string
           format: date-time
@@ -493,175 +692,248 @@ components:
           type: string
           format: date-time
 
-    # ========== 会议 ==========
-    MeetingSummary:
+    KnowledgeGraphNode:
       type: object
       properties:
         id:
           type: string
-        title:
+        type:
           type: string
-          example: "产品策略会"
-        meeting_date:
+          example: domain
+        label:
           type: string
-          format: date
-          example: "2024-04-01"
-        participants:
-          type: array
-          items:
-            type: string
-          example: ["张三", "李四", "我"]
-        speech_count:
-          type: integer
-          example: 15
-        topic_count:
-          type: integer
-          example: 5
-        status:
-          type: string
-          enum: [processing, completed, error]
-          example: "completed"
-        created_at:
-          type: string
-          format: date-time
-
-    MeetingDetail:
-      allOf:
-        - $ref: '#/components/schemas/MeetingSummary'
-        - type: object
-          properties:
-            speeches:
-              type: array
-              items:
-                $ref: '#/components/schemas/Speech'
-            source_file:
-              type: string
-              description: 原始文件名
-            file_size:
-              type: integer
-              description: 文件大小（字节）
-
-    # ========== 发言 ==========
-    Speech:
-      type: object
-      properties:
-        id:
-          type: string
-        meeting_id:
-          type: string
-        timestamp:
-          type: string
-          example: "10:30:45"
-        speaker:
-          type: string
-          example: "我"
-        raw_text:
-          type: string
-          description: 原始发言文本
-          example: "我觉得这个方案呃...可能还需要再考虑一下"
-        cleaned_text:
-          type: string
-          description: 清理后的文本（去除口语词）
-          example: "我觉得这个方案可能还需要再考虑一下"
-        key_quotes:
-          type: array
-          items:
-            type: string
-          description: 提取的金句
-          example: ["方案设计需要全面评估可行性和风险"]
-        topics:
-          type: array
-          items:
-            type: string
-          description: 话题标签
-          example: ["产品策略", "风险评估"]
-        sentiment:
-          type: string
-          enum: [positive, negative, neutral, mixed]
-          example: "neutral"
-        word_count:
-          type: integer
-          example: 24
-        created_at:
-          type: string
-          format: date-time
-
-    # ========== 知识图谱 ==========
-    TopicNode:
-      type: object
-      properties:
-        id:
-          type: string
-        name:
-          type: string
-          example: "产品策略"
-        count:
-          type: integer
-          description: 出现频次
-          example: 15
-        meeting_count:
-          type: integer
-          description: 出现在多少会议中
-          example: 5
-        first_appearance:
-          type: string
-          format: date
-          example: "2024-03-01"
-        last_appearance:
-          type: string
-          format: date
-          example: "2024-04-01"
         x:
           type: number
-          description: 图谱布局X坐标
-          nullable: true
         y:
           type: number
-          description: 图谱布局Y坐标
+        size:
+          type: number
           nullable: true
 
-    TopicEdge:
+    KnowledgeGraphEdge:
       type: object
       properties:
         source:
           type: string
-          description: 源话题ID
         target:
           type: string
-          description: 目标话题ID
+        type:
+          type: string
         strength:
           type: number
-          description: 关联强度 (0-1)
-          minimum: 0
-          maximum: 1
-        co_occurrence:
-          type: integer
-          description: 共现次数
+          nullable: true
 
-    # ========== 设置 ==========
+    KnowledgeGraphData:
+      type: object
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/KnowledgeGraphNode'
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/KnowledgeGraphEdge'
+        layout_version:
+          type: string
+
+    GraphDomainQuote:
+      type: object
+      properties:
+        id:
+          type: string
+        content_id:
+          type: string
+        text:
+          type: string
+        domain_ids:
+          type: array
+          items:
+            type: string
+
+    GraphDomainDetail:
+      type: object
+      properties:
+        domain:
+          $ref: '#/components/schemas/Domain'
+        quotes:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphDomainQuote'
+        total:
+          type: integer
+
+    GraphLayoutSaveRequest:
+      type: object
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/KnowledgeGraphNode'
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/KnowledgeGraphEdge'
+        viewport:
+          type: object
+          nullable: true
+
+    ModelConfigCreate:
+      type: object
+      required: [provider, name, default_model]
+      properties:
+        provider:
+          type: string
+        name:
+          type: string
+        api_key:
+          type: string
+          nullable: true
+        base_url:
+          type: string
+          nullable: true
+        default_model:
+          type: string
+        is_default:
+          type: boolean
+        is_enabled:
+          type: boolean
+
     ModelConfig:
       type: object
       properties:
         id:
           type: string
+        user_id:
+          type: string
         provider:
           type: string
-          enum: [kimi, openai, claude, ollama]
-          example: "openai"
         name:
           type: string
-          example: "我的OpenAI"
+        has_api_key:
+          type: boolean
         base_url:
           type: string
           nullable: true
-          example: "https://api.openai.com/v1"
         default_model:
           type: string
-          example: "gpt-4"
         is_default:
           type: boolean
         is_enabled:
           type: boolean
+        encryption_version:
+          type: integer
         created_at:
           type: string
           format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ModelConfigTestRequest:
+      type: object
+      required: [provider, default_model]
+      properties:
+        config_id:
+          type: string
+          nullable: true
+        provider:
+          type: string
+        api_key:
+          type: string
+          nullable: true
+        base_url:
+          type: string
+          nullable: true
+        default_model:
+          type: string
+
+    ModelConfigTestResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        provider:
+          type: string
+        model:
+          type: string
+
+    SpeakerIdentityCreate:
+      type: object
+      required: [display_name]
+      properties:
+        display_name:
+          type: string
+        aliases:
+          type: array
+          items:
+            type: string
+        color:
+          type: string
+          nullable: true
+        avatar_url:
+          type: string
+          nullable: true
+        is_default:
+          type: boolean
+
+    SpeakerIdentity:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        display_name:
+          type: string
+        aliases:
+          type: array
+          items:
+            type: string
+          nullable: true
+        color:
+          type: string
+          nullable: true
+        avatar_url:
+          type: string
+          nullable: true
+        is_default:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SpeakerIdentityEnvelope:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/SpeakerIdentity'
+        meta:
+          type: object
+          nullable: true
+        error:
+          type: object
+          nullable: true
+
+    SpeakerIdentityListEnvelope:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpeakerIdentity'
+        meta:
+          type: object
+          nullable: true
+        error:
+          type: object
+          nullable: true

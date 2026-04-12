@@ -5,12 +5,19 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from speaksum.core.database import get_db
 from speaksum.core.security import get_current_user
-from speaksum.models.models import Meeting, Speech, Topic
-from speaksum.schemas.schemas import ApiResponse, GraphLayoutSaveRequest, KnowledgeGraphData, SpeechResponse
-from speaksum.services.knowledge_graph_builder import KnowledgeGraphBuilder
+from speaksum.models.models import Content, Domain, Quote, QuoteDomain
+from speaksum.schemas.schemas import (
+    ApiResponse,
+    GraphDomainDetailResponse,
+    GraphDomainQuoteResponse,
+    GraphLayoutSaveRequest,
+    KnowledgeGraphData,
+)
+from speaksum.services.domain_graph_builder import DomainGraphBuilder
 
 router = APIRouter(prefix="/api/v1/knowledge-graph", tags=["Knowledge Graph"])
 
@@ -21,34 +28,55 @@ async def get_knowledge_graph(
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> KnowledgeGraphData:
     user_id = current_user.get("sub", "")
-    builder = KnowledgeGraphBuilder(db)
+    builder = DomainGraphBuilder(db)
     return await builder.build_graph(user_id)
 
 
-@router.get("/topics/{topic_id}/speeches")
-async def get_topic_speeches(
-    topic_id: str,
+@router.get("/domains/{domain_id}")
+async def get_domain_detail(
+    domain_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: dict[str, Any] = Depends(get_current_user),
-) -> list[SpeechResponse]:
+) -> GraphDomainDetailResponse:
     user_id = current_user.get("sub", "")
-    topic_result = await db.execute(
-        select(Topic).where(Topic.id == topic_id, Topic.user_id == user_id)
-    )
-    topic = topic_result.scalar_one_or_none()
-    if not topic:
-        raise HTTPException(status_code=404, detail="Topic not found")
+    domain_result = await db.execute(select(Domain).where(Domain.id == domain_id))
+    domain = domain_result.scalar_one_or_none()
+    if not domain:
+        raise HTTPException(status_code=404, detail="Domain not found")
 
-    result = await db.execute(
-        select(Speech)
-        .join(Meeting)
-        .where(Meeting.user_id == user_id)
-        .where(Speech.topics.contains([topic.name]))
-        .order_by(Speech.timestamp)
-        .distinct()
+    quotes_result = await db.execute(
+        select(Quote)
+        .join(Quote.quote_domains)
+        .join(Content)
+        .where(Quote.user_id == user_id, Content.user_id == user_id, Quote.quote_domains.any(domain_id=domain_id))
+        .options(selectinload(Quote.quote_domains).selectinload(QuoteDomain.domain))
+        .order_by(Content.content_date.desc(), Quote.sequence_number, Quote.created_at)
     )
-    speeches = result.scalars().all()
-    return [SpeechResponse.model_validate(s) for s in speeches]
+    quotes = quotes_result.scalars().unique().all()
+
+    return GraphDomainDetailResponse(
+        domain=domain,
+        quotes=[
+            GraphDomainQuoteResponse(
+                id=quote.id,
+                content_id=quote.content_id,
+                text=quote.text,
+                domain_ids=sorted(
+                    [quote_domain.domain_id for quote_domain in quote.quote_domains],
+                    key=lambda quote_domain_id: next(
+                        (
+                            quote_domain.domain.sort_order
+                            for quote_domain in quote.quote_domains
+                            if quote_domain.domain_id == quote_domain_id and quote_domain.domain is not None
+                        ),
+                        0,
+                    ),
+                ),
+            )
+            for quote in quotes
+        ],
+        total=len(quotes),
+    )
 
 
 @router.post("/layout")
@@ -57,14 +85,9 @@ async def save_graph_layout(
     db: AsyncSession = Depends(get_db),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> ApiResponse[dict[str, str]]:
-    """Save user-adjusted graph layout."""
     user_id = current_user.get("sub", "")
-
-    # Convert payload to KnowledgeGraphData for the builder
     graph_data = KnowledgeGraphData(nodes=payload.nodes, edges=payload.edges)
-
-    # Save layout using the builder
-    builder = KnowledgeGraphBuilder(db)
+    builder = DomainGraphBuilder(db)
     await builder.save_layout(user_id, graph_data)
 
     return ApiResponse.success_response({"status": "saved"})

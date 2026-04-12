@@ -41,9 +41,9 @@ export const RootLayout: React.FC = () => {
   return (
     <div className="min-h-screen bg-bg-primary flex flex-col">
       <Header />
-      <div className="flex flex-1">
+      <div className="flex flex-1 min-h-0">
         <Sidebar />
-        <main className="flex-1 p-6 lg:p-8 overflow-auto">
+        <main className="flex-1 min-h-0 overflow-y-auto p-6 lg:p-8">
           <ErrorBoundary>
             <Outlet />
           </ErrorBoundary>

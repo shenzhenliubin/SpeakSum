@@ -2,22 +2,76 @@
 
 import asyncio
 import logging
-from datetime import date
+import uuid
 from typing import Any
 
 from celery import Task
-from sqlalchemy import select
+import httpx
+from redis.asyncio import from_url as redis_from_url
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from speaksum.core.config import settings
-from speaksum.models.models import Meeting, Speech, Topic, UserModelConfig
-from speaksum.services.file_parser import extract_meeting_date, extract_speeches, parse_file
-from speaksum.services.knowledge_graph_builder import KnowledgeGraphBuilder
+from speaksum.core.exceptions import SpeakSumException
+from speaksum.models.models import Content, Quote, QuoteDomain, SpeakerIdentity, UserModelConfig, now_utc
+from speaksum.services.content_processor import ContentProcessor
+from speaksum.services.domain_graph_builder import DomainGraphBuilder, ensure_default_domains
+from speaksum.services.file_parser import extract_meeting_date, parse_file
 from speaksum.services.llm_client import get_llm_client
-from speaksum.services.text_processor import TextProcessor
+from speaksum.services.speaker_evidence import scan_speaker_evidence
 from speaksum.tasks.celery_app import app
 
 logger = logging.getLogger(__name__)
+PROCESSING_LOCK_TTL_SECONDS = 60 * 60
+PROCESSING_LOCK_RETRY_DELAY_SECONDS = 5
+PROCESSING_QUEUE_WAIT_MESSAGE = "前序文件处理中，当前文件排队等待中。"
+PROCESSING_LOCK_PREFIX = "speaksum:content-processing-lock"
+
+
+def _processing_lock_key(user_id: str) -> str:
+    return f"{PROCESSING_LOCK_PREFIX}:{user_id}"
+
+
+async def _acquire_processing_lock(user_id: str) -> str | None:
+    token = uuid.uuid4().hex
+    redis = redis_from_url(settings.REDIS_URL, decode_responses=True)
+    try:
+        acquired = await redis.set(
+            _processing_lock_key(user_id),
+            token,
+            ex=PROCESSING_LOCK_TTL_SECONDS,
+            nx=True,
+        )
+        return token if acquired else None
+    finally:
+        await redis.aclose()
+
+
+async def _release_processing_lock(user_id: str, token: str) -> None:
+    redis = redis_from_url(settings.REDIS_URL, decode_responses=True)
+    try:
+        await redis.eval(
+            """
+            if redis.call('get', KEYS[1]) == ARGV[1] then
+              return redis.call('del', KEYS[1])
+            end
+            return 0
+            """,
+            1,
+            _processing_lock_key(user_id),
+            token,
+        )
+    finally:
+        await redis.aclose()
+
+
+def _should_retry_processing_error(exc: Exception) -> bool:
+    if isinstance(exc, SpeakSumException):
+        return exc.status_code >= 500
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        return status_code >= 500 or status_code == 429
+    return True
 
 
 class SqlAlchemyTask(Task):  # type: ignore[misc]
@@ -34,90 +88,131 @@ class SqlAlchemyTask(Task):  # type: ignore[misc]
 
 
 @app.task(bind=True, base=SqlAlchemyTask, max_retries=3)  # type: ignore[untyped-decorator]
-def process_meeting_task(
+def process_content_task(
     self: SqlAlchemyTask,
-    meeting_id: str,
+    content_id: str,
     file_path: str,
-    speaker_identity: str,
+    source_type: str,
     model_config: str = "kimi",
 ) -> dict[str, Any]:
-    return asyncio.run(_process_meeting_async(self, meeting_id, file_path, speaker_identity, model_config))
+    return asyncio.run(_process_content_async(self, content_id, file_path, source_type, model_config))
 
 
-async def _process_meeting_async(
+async def _replace_content_quotes(
+    db: AsyncSession,
+    content: Content,
+    quotes_payload: list[dict[str, Any]],
+) -> None:
+    existing_quote_ids = (
+        await db.execute(select(Quote.id).where(Quote.content_id == content.id))
+    ).scalars().all()
+    if existing_quote_ids:
+        await db.execute(delete(QuoteDomain).where(QuoteDomain.quote_id.in_(existing_quote_ids)))
+        await db.execute(delete(Quote).where(Quote.id.in_(existing_quote_ids)))
+        await db.flush()
+
+    created_quotes: list[Quote] = []
+    for index, payload in enumerate(quotes_payload, start=1):
+        text = str(payload.get("text") or "").strip()
+        if not text:
+            continue
+        quote = Quote(
+            content_id=content.id,
+            user_id=content.user_id,
+            sequence_number=index,
+            text=text,
+        )
+        db.add(quote)
+        created_quotes.append(quote)
+
+    await db.flush()
+
+    for quote, payload in zip(created_quotes, quotes_payload, strict=False):
+        for domain_id in payload.get("domain_ids") or []:
+            db.add(QuoteDomain(quote_id=quote.id, domain_id=domain_id))
+
+
+async def _process_content_async(
     self: SqlAlchemyTask,
-    meeting_id: str,
+    content_id: str,
     file_path: str,
-    speaker_identity: str,
+    source_type: str,
     model_config: str = "kimi",
 ) -> dict[str, Any]:
-    """Process meeting with detailed state machine.
-
-    State machine: PENDING → PARSING → EXTRACTING → CLEANING → TAGGING → BUILDING_GRAPH → SUCCESS
-    """
     async with self.async_session() as db:
-        try:
-            # Stage 1: PARSING (0% → 10%)
-            await _update_progress(self, meeting_id, "PARSING", "parsing", 10)
-            text = parse_file(file_path)
-            logger.info("Parsed file %s, text length=%d", file_path, len(text))
+        lock_token: str | None = None
+        content_result = await db.execute(select(Content).where(Content.id == content_id))
+        content = content_result.scalar_one_or_none()
+        if not content:
+            logger.error("Content %s not found in database at task start", content_id)
+            return {"content_id": content_id, "status": "error", "error": "Content not found"}
 
-            # Extract meeting date from file content
-            meeting_date = extract_meeting_date(text)
-            if meeting_date:
-                meeting_result = await db.execute(select(Meeting).where(Meeting.id == meeting_id))
-                meeting_obj = meeting_result.scalar_one_or_none()
-                if meeting_obj and not meeting_obj.meeting_date:
-                    meeting_obj.meeting_date = meeting_date
-                    await db.commit()
-                    logger.info("Set meeting %s date to %s", meeting_id, meeting_date)
-            else:
-                logger.warning("No meeting date found in file %s", file_path)
-
-            # Stage 2: EXTRACTING (10% → 40%)
-            await _update_progress(self, meeting_id, "EXTRACTING", "extracting", 25)
-            from speaksum.services.file_parser import extract_speeches
-            raw_speeches = extract_speeches(text, speaker_identity)
-            logger.info(
-                "Extracted %d speeches for speaker '%s' from %s",
-                len(raw_speeches), speaker_identity, file_path,
+        lock_token = await _acquire_processing_lock(content.user_id)
+        if lock_token is None:
+            content.status = "pending"
+            content.error_message = None
+            content.ignored_reason = None
+            await db.commit()
+            await _update_progress(
+                self,
+                content_id,
+                "PENDING",
+                "queued",
+                0,
+                message=PROCESSING_QUEUE_WAIT_MESSAGE,
             )
-            await _update_progress(self, meeting_id, "EXTRACTING", "extracting", 40)
+            raise self.retry(
+                exc=RuntimeError(PROCESSING_QUEUE_WAIT_MESSAGE),
+                countdown=PROCESSING_LOCK_RETRY_DELAY_SECONDS,
+            )
 
-            # Handle empty speeches - mark as error
-            if not raw_speeches:
-                meeting_result = await db.execute(select(Meeting).where(Meeting.id == meeting_id))
-                failed_meeting = meeting_result.scalar_one_or_none()
-                if failed_meeting:
-                    failed_meeting.status = "error"
-                    failed_meeting.error_message = (
-                        f"未找到说话人「{speaker_identity}」的发言记录。"
-                        "请确认说话人身份是否正确，以及文件格式是否符合要求。"
+        try:
+            content.status = "processing"
+            content.error_message = None
+            content.ignored_reason = None
+            await db.commit()
+
+            await _update_progress(self, content_id, "PARSING", "parsing", 10, message="正在解析内容文件")
+            text = parse_file(file_path)
+
+            content_date = extract_meeting_date(text, content.title or content.source_file_name or file_path)
+            if content_date and not content.content_date:
+                content.content_date = content_date
+                await db.commit()
+
+            aliases: list[str] = []
+            evidence: dict[str, Any] | None = None
+            if source_type == "meeting_minutes":
+                identity_result = await db.execute(
+                    select(SpeakerIdentity).where(
+                        SpeakerIdentity.user_id == content.user_id,
+                        SpeakerIdentity.display_name == "刘彬",
                     )
-                    await db.commit()
-                await _update_progress(self, meeting_id, "FAILED", "error", 0, error="No speeches found")
-                return {"meeting_id": meeting_id, "status": "error", "error": "No speeches found"}
+                )
+                identity = identity_result.scalar_one_or_none()
+                aliases = identity.aliases if identity and identity.aliases else []
 
-            # Stage 3: CLEANING (40% → 70%)
-            # Look up user's model config from database to get API key
-            meeting_result = await db.execute(select(Meeting).where(Meeting.id == meeting_id))
-            meeting = meeting_result.scalar_one_or_none()
-            if not meeting:
-                logger.error("Meeting %s not found in database during CLEANING stage", meeting_id)
-                return {"meeting_id": meeting_id, "status": "error", "error": "Meeting not found"}
+                await _update_progress(
+                    self,
+                    content_id,
+                    "IDENTIFYING_SPEAKER",
+                    "identifying_speaker",
+                    30,
+                    message="正在识别刘彬发言",
+                )
+                evidence = scan_speaker_evidence(text, display_name="刘彬", aliases=aliases)
+
             config_result = await db.execute(
-                select(UserModelConfig).where(
-                    UserModelConfig.user_id == meeting.user_id,
+                select(UserModelConfig)
+                .where(
+                    UserModelConfig.user_id == content.user_id,
                     UserModelConfig.provider == model_config,
                     UserModelConfig.is_enabled == True,
-                ).order_by(UserModelConfig.is_default.desc())
+                )
+                .order_by(UserModelConfig.is_default.desc())
             )
             user_config = config_result.scalars().first()
             if user_config:
-                logger.info(
-                    "Using user config: provider=%s, model=%s, has_api_key=%s",
-                    model_config, user_config.default_model, bool(user_config.api_key),
-                )
                 llm = get_llm_client(
                     provider=model_config,
                     api_key=user_config.api_key,
@@ -125,96 +220,105 @@ async def _process_meeting_async(
                     model=user_config.default_model,
                 )
             else:
-                logger.warning("No user config found for provider=%s, using default", model_config)
-                llm = get_llm_client(model_config)
-            processor = TextProcessor(llm)
+                llm = get_llm_client(provider=model_config)
 
-            cleaned_speeches: list[Speech] = []
-            total = len(raw_speeches) or 1
-            for idx, raw in enumerate(raw_speeches):
-                processed = await processor.process_speech(raw)
-                speech = Speech(
-                    meeting_id=meeting_id,
-                    sequence_number=idx + 1,
-                    timestamp=processed["timestamp"],
-                    speaker=processed["speaker"],
-                    is_target_speaker=(processed["speaker"] == speaker_identity),
-                    raw_text=processed["raw_text"],
-                    cleaned_text=processed.get("cleaned_text"),
-                    key_quotes=processed.get("key_quotes"),
-                    topics=processed.get("topics"),
-                    sentiment=processed.get("sentiment"),
-                    word_count=processed["word_count"],
-                )
-                cleaned_speeches.append(speech)
-                percent = 40 + int((idx + 1) / total * 30)
-                await _update_progress(self, meeting_id, "CLEANING", "cleaning", percent)
+            processor = ContentProcessor(llm)
 
-            db.add_all(cleaned_speeches)
-            await db.commit()
+            await _update_progress(
+                self,
+                content_id,
+                "SUMMARIZING",
+                "summarizing",
+                65,
+                message="正在生成发言总结",
+            )
+            processed = await processor.process(
+                source_type=source_type,
+                text=text,
+                owner_identity="刘彬",
+                aliases=aliases,
+                evidence=evidence,
+            )
 
-            # Stage 4: TAGGING (70% → 75%)
-            await _update_progress(self, meeting_id, "TAGGING", "tagging", 75)
-
-            # Update topics
-            meeting_result = await db.execute(select(Meeting).where(Meeting.id == meeting_id))
-            meeting = meeting_result.scalar_one_or_none()
-            if not meeting:
-                logger.error("Meeting %s not found in database during TAGGING stage", meeting_id)
-                return {"meeting_id": meeting_id, "status": "error", "error": "Meeting not found"}
-            all_topics: set[str] = set()
-            for speech in cleaned_speeches:
-                all_topics.update(speech.topics or [])
-
-            for topic_name in all_topics:
-                topic_result = await db.execute(
-                    select(Topic).where(Topic.user_id == meeting.user_id, Topic.name == topic_name)
-                )
-                topic = topic_result.scalar_one_or_none()
-                topic_speeches = [s for s in cleaned_speeches if topic_name in (s.topics or [])]
-                meeting_dates = [meeting.meeting_date] if meeting.meeting_date else []
-                if topic:
-                    topic.speech_count += len(topic_speeches)
-                    topic.meeting_count += 1
-                    if meeting_dates:
-                        topic.last_appearance = max([topic.last_appearance or date.min] + meeting_dates)
-                else:
-                    db.add(
-                        Topic(
-                            user_id=meeting.user_id,
-                            name=topic_name,
-                            speech_count=len(topic_speeches),
-                            meeting_count=1,
-                            first_appearance=meeting_dates[0] if meeting_dates else None,
-                            last_appearance=meeting_dates[0] if meeting_dates else None,
-                        )
-                    )
-            await db.commit()
-
-            # Stage 5: BUILDING_GRAPH (75% → 90%)
-            await _update_progress(self, meeting_id, "BUILDING_GRAPH", "building graph", 90)
-            builder = KnowledgeGraphBuilder(db)
-            graph = await builder.build_graph(meeting.user_id)
-            await builder.save_layout(meeting.user_id, graph)
-
-            # Stage 6: SUCCESS (100%)
-            meeting.status = "completed"
-            await db.commit()
-
-            await _update_progress(self, meeting_id, "SUCCESS", "completed", 100)
-            return {"meeting_id": meeting_id, "status": "completed"}
-
-        except Exception as exc:
-            logger.exception("process_meeting_task failed")
-            error_msg = str(exc)
-            meeting_result = await db.execute(select(Meeting).where(Meeting.id == meeting_id))
-            failed_meeting = meeting_result.scalar_one_or_none()
-            if failed_meeting:
-                failed_meeting.status = "failed"
-                failed_meeting.error_message = error_msg[:1000]  # Limit to 1000 chars
+            if processed["status"] == "ignored":
+                content.status = "ignored"
+                content.ignored_reason = processed.get("ignored_reason")
+                content.summary_text = None
+                content.completed_at = now_utc()
+                await _replace_content_quotes(db, content, [])
                 await db.commit()
-            await _update_progress(self, meeting_id, "FAILED", "error", 0, error=error_msg)
-            raise self.retry(exc=exc) from exc
+                await _update_progress(
+                    self,
+                    content_id,
+                    "IGNORED",
+                    "ignored",
+                    100,
+                    error=content.ignored_reason,
+                    message=content.ignored_reason,
+                )
+                return {
+                    "content_id": content.id,
+                    "status": "ignored",
+                    "stage": "ignored",
+                    "percent": 100,
+                    "message": content.ignored_reason,
+                    "error": content.ignored_reason,
+                }
+
+            await _update_progress(
+                self,
+                content_id,
+                "EXTRACTING_QUOTES",
+                "extracting_quotes",
+                80,
+                message="正在整理思想金句",
+            )
+            await ensure_default_domains(db)
+            content.summary_text = processed["summary"]
+            content.error_message = None
+            content.ignored_reason = None
+            await _replace_content_quotes(db, content, processed.get("quotes") or [])
+            await db.commit()
+
+            await _update_progress(
+                self,
+                content_id,
+                "BUILDING_GRAPH",
+                "building_graph",
+                90,
+                message="正在构建领域图谱",
+            )
+            builder = DomainGraphBuilder(db)
+            await builder.refresh_graph_for_user(content.user_id)
+
+            content.status = "completed"
+            content.completed_at = now_utc()
+            await db.commit()
+            await _update_progress(self, content_id, "SUCCESS", "completed", 100, message="处理完成")
+            return {
+                "content_id": content.id,
+                "status": "completed",
+                "stage": "completed",
+                "percent": 100,
+                "message": "处理完成",
+            }
+        except Exception as exc:
+            logger.exception("process_content_task failed")
+            error_msg = str(exc)
+            content_result = await db.execute(select(Content).where(Content.id == content_id))
+            failed_content = content_result.scalar_one_or_none()
+            if failed_content:
+                failed_content.status = "failed"
+                failed_content.error_message = error_msg[:1000]
+                failed_content.completed_at = now_utc()
+                await db.commit()
+            await _update_progress(self, content_id, "FAILED", "error", 0, error=error_msg)
+            if _should_retry_processing_error(exc):
+                raise self.retry(exc=exc) from exc
+            raise
+        finally:
+            if lock_token is not None:
+                await _release_processing_lock(content.user_id, lock_token)
 
 
 async def _update_progress(
@@ -224,12 +328,13 @@ async def _update_progress(
     stage: str | None,
     percent: int,
     error: str | None = None,
+    message: str | None = None,
 ) -> None:
     info = {
         "meeting_id": meeting_id,
         "stage": stage,
         "percent": percent,
-        "message": f"{stage}: {percent}%",
+        "message": message or f"{stage}: {percent}%",
     }
     if error:
         info["error"] = error

@@ -1,4 +1,5 @@
 import dayjs from 'dayjs';
+import type { Content } from '@/types';
 
 /**
  * Format file size to human readable string
@@ -14,15 +15,19 @@ export function formatFileSize(bytes: number): string {
 /**
  * Format date to locale string (YYYY年MM月DD日)
  */
-export function formatDate(date: string | Date): string {
-  return dayjs(date).format('YYYY年MM月DD日');
+export function formatDate(date: string | Date | null | undefined): string {
+  if (!date) return '未识别日期';
+  const parsed = dayjs(date);
+  return parsed.isValid() ? parsed.format('YYYY年MM月DD日') : '未识别日期';
 }
 
 /**
  * Format datetime to locale string
  */
-export function formatDateTime(date: string | Date): string {
-  return dayjs(date).format('YYYY年MM月DD日 HH:mm');
+export function formatDateTime(date: string | Date | null | undefined): string {
+  if (!date) return '未识别日期';
+  const parsed = dayjs(date);
+  return parsed.isValid() ? parsed.format('YYYY年MM月DD日 HH:mm') : '未识别日期';
 }
 
 /**
@@ -73,9 +78,11 @@ export function formatMeetingDuration(startTime: string, endTime?: string): stri
 /**
  * Format relative time (e.g., "3天前")
  */
-export function formatRelativeTime(date: string | Date): string {
+export function formatRelativeTime(date: string | Date | null | undefined): string {
+  if (!date) return '日期未知';
   const now = dayjs();
   const target = dayjs(date);
+  if (!target.isValid()) return '日期未知';
   const diffDays = now.diff(target, 'day');
 
   if (diffDays === 0) {
@@ -120,11 +127,20 @@ export function formatPercent(value: number, decimals = 0): string {
  */
 export function formatTaskStage(stage: string): string {
   const stageMap: Record<string, string> = {
+    queued: '排队等待',
+    pending: '等待处理',
     parsing: '解析文件',
+    identifying_speaker: '识别发言人',
+    summarizing: '生成发言总结',
+    extracting_quotes: '提炼思想金句',
+    understanding_context: '理解背景',
+    extracting_viewpoints: '提炼观点',
     extracting: '提取发言',
     cleaning: '清理口语',
     tagging: '提取话题',
     building_graph: '构建图谱',
+    ignored: '已忽略',
+    error: '处理失败',
   };
   return stageMap[stage] || stage;
 }
@@ -137,9 +153,25 @@ export function formatStatus(status: string): string {
     pending: '待处理',
     processing: '处理中',
     completed: '已完成',
+    ignored: '已忽略',
     error: '出错',
+    failed: '已失败',
   };
   return statusMap[status] || status;
+}
+
+export function formatSourceType(sourceType: string): string {
+  if (sourceType === 'meeting_minutes') return '会议纪要';
+  if (sourceType === 'other_text') return '其他文本';
+  return sourceType;
+}
+
+export function getContentPrimaryCount(content: Content): number {
+  return content.quotes.length;
+}
+
+export function getContentPrimaryLabel(): string {
+  return '金句';
 }
 
 /**

@@ -16,6 +16,55 @@ def _default_count_tokens(text: str) -> int:
     return int(cn_count * 1.2 + en_count * 0.25)
 
 
+def _extract_error_detail(response: httpx.Response) -> str | None:
+    try:
+        data = response.json()
+    except ValueError:
+        return None
+
+    if isinstance(data, dict):
+        error = data.get("error")
+        if isinstance(error, dict):
+            message = error.get("message")
+            if message:
+                return str(message)
+        message = data.get("message")
+        if message:
+            return str(message)
+    return None
+
+
+def _raise_provider_http_error(provider_name: str, exc: httpx.HTTPStatusError) -> None:
+    status_code = exc.response.status_code
+    detail = _extract_error_detail(exc.response)
+
+    if status_code in {401, 403}:
+        raise SpeakSumException(
+            f"{provider_name} API Key 无效、已过期，或当前账号没有访问该模型的权限。",
+            status_code=status_code,
+        ) from exc
+    if status_code == 404:
+        raise SpeakSumException(
+            f"{provider_name} 接口地址无效，请检查 Base URL 配置或供应商接口地址。",
+            status_code=status_code,
+        ) from exc
+    if status_code == 429:
+        raise SpeakSumException(
+            f"{provider_name} 请求过于频繁，请稍后重试。",
+            status_code=status_code,
+        ) from exc
+    if status_code >= 500:
+        raise SpeakSumException(
+            f"{provider_name} 服务暂时不可用，请稍后重试。",
+            status_code=status_code,
+        ) from exc
+
+    message = f"{provider_name} 请求失败（HTTP {status_code}）"
+    if detail:
+        message = f"{message}：{detail}"
+    raise SpeakSumException(message, status_code=status_code) from exc
+
+
 class BaseLLMClient(ABC):
     @abstractmethod
     async def generate(
@@ -72,7 +121,10 @@ class KimiClient(BaseLLMClient):
                 },
                 json=payload,
             )
-            resp.raise_for_status()
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                _raise_provider_http_error("Kimi", exc)
             data = resp.json()
             return str(data["choices"][0]["message"]["content"])
 
@@ -87,9 +139,61 @@ class KimiClient(BaseLLMClient):
                 },
                 json={"model": "text-embedding-3-small", "input": text},
             )
-            resp.raise_for_status()
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                _raise_provider_http_error("Kimi", exc)
             data = resp.json()
             return list(data["data"][0]["embedding"])
+
+
+class SiliconFlowClient(BaseLLMClient):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str = "deepseek-ai/DeepSeek-V3",
+    ) -> None:
+        self.api_key = api_key or settings.SILICONFLOW_API_KEY or ""
+        self.base_url = (base_url or "https://api.siliconflow.cn/v1").rstrip("/")
+        self.model = model
+        if not self.api_key:
+            raise SpeakSumException("SiliconFlow API key not configured", status_code=400)
+
+    async def generate(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+    ) -> str:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
+        async with httpx.AsyncClient(timeout=300) as client:
+            resp = await client.post(
+                f"{self.base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                _raise_provider_http_error("硅基流动", exc)
+            data = resp.json()
+            return str(data["choices"][0]["message"]["content"])
+
+    async def embed(self, text: str) -> list[float]:
+        raise SpeakSumException(
+            "硅基流动 embedding 当前未在 SpeakSum 中启用。",
+            status_code=400,
+        )
 
 
 class OpenAIClient(BaseLLMClient):
@@ -228,6 +332,12 @@ class OllamaClient(BaseLLMClient):
         return 32768
 
 
+def _normalize_provider_base_url(provider: str, base_url: str | None) -> str | None:
+    if provider in {"kimi", "siliconflow", "openai", "claude", "ollama"}:
+        return None
+    return base_url
+
+
 def get_llm_client(
     provider: str,
     api_key: str | None = None,
@@ -235,23 +345,30 @@ def get_llm_client(
     model: str | None = None,
 ) -> BaseLLMClient:
     provider = provider.lower()
+    normalized_base_url = _normalize_provider_base_url(provider, base_url)
     if provider == "kimi":
         return KimiClient(
-            api_key=api_key, base_url=base_url, model=model or "moonshot-v1-128k"
+            api_key=api_key, base_url=normalized_base_url, model=model or "moonshot-v1-128k"
+        )
+    if provider == "siliconflow":
+        return SiliconFlowClient(
+            api_key=api_key,
+            base_url=normalized_base_url,
+            model=model or "deepseek-ai/DeepSeek-V3",
         )
     if provider == "openai":
         return OpenAIClient(
-            api_key=api_key, base_url=base_url, model=model or "gpt-4-turbo"
+            api_key=api_key, base_url=normalized_base_url, model=model or "gpt-4-turbo"
         )
     if provider == "claude":
         return ClaudeClient(
             api_key=api_key,
-            base_url=base_url,
+            base_url=normalized_base_url,
             model=model or "claude-3-sonnet-20240229",
         )
     if provider == "ollama":
         return OllamaClient(
-            base_url=base_url or "http://localhost:11434",
+            base_url=normalized_base_url or "http://localhost:11434",
             model=model or "llama2:13b",
         )
     raise SpeakSumException(f"Unknown LLM provider: {provider}", status_code=400)

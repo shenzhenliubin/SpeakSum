@@ -1,295 +1,245 @@
-# SpeakSum 后端实现设计文档
+# SpeakSum Backend Implementation Design
 
-**文档版本**: 1.0  
-**日期**: 2026-04-03  
-**作者**: 后端实现 Agent  
-**状态**: PENDING_REVIEW
+## 1. 文档定位
 
----
+本文档描述当前后端已落地的实现口径。  
+当前系统已经不再围绕 `meeting / speech / viewpoint / topic` 主模型展开，主路径为：
 
-## 1. 设计目标
+- `content`
+- `summary_text`
+- `quotes`
+- `domains`
+- `quote_domains`
+- `domain_relations`
 
-将现有的 CLI 骨架项目扩展为完整的 FastAPI 异步 Web 后端，实现会议文件上传、发言提取、口语清理、话题标签、知识图谱构建等核心功能，并提供 RESTful API 供前端调用。
-
----
-
-## 1.1 范围说明
-
-本次后端实现严格基于任务描述中的产出要求，以下功能作为 **MVP 优先实现**：
-- 核心流程：上传 → 解析 → 提取发言 → 清理 → 标签 → 返回结果
-- 指定的 API 路由（upload, meetings, speeches, knowledge_graph, settings）
-- 多供应商 LLM 客户端与文本处理服务
-- Celery 异步任务管道
-
-以下功能基于任务要求 **不在本次实现范围内**，留待后续迭代：
-- **认证路由** (`/api/auth/*`)：任务仅要求 `core/security.py` 提供 JWT 处理，不实现注册/登录 API
-- **导出 API** (`/api/export/*`)：任务未列出导出端点
-- **说话人身份管理 API**：任务未在 API 列表中要求
-- **MinIO 对象存储**：任务要求本地文件上传路径配置，暂未集成 MinIO
-- **Alembic 迁移脚本**：任务标注为"可选"，本次不生成具体 migration 目录
-
-**认证策略（MVP）**：
-- 所有业务 API 路由均使用 `Depends(get_current_user)` 注入当前用户
-- MVP 阶段不实现注册/登录，测试和演示通过 `core/security.py` 预生成测试 Token 或 Header 方式绕过
-- 数据库查询强制附加 `user_id` 过滤，保证数据隔离
+如果和历史文档存在冲突，以本文档和当前代码实现为准。
 
 ---
 
-## 2. 架构设计
+## 2. 当前后端主模型
 
-### 2.1 模块结构
+### 2.1 内容记录 (`contents`)
 
-```
-src/speaksum/
-├── main.py                    # FastAPI 应用入口
-├── core/
-│   ├── config.py              # Pydantic Settings
-│   ├── database.py            # SQLAlchemy async engine + session
-│   └── security.py            # JWT token 处理
-├── models/
-│   └── models.py              # SQLAlchemy 2.0 Declarative models
-├── schemas/
-│   └── schemas.py             # Pydantic v2 request/response DTOs
-├── api/
-│   ├── __init__.py
-│   ├── upload.py              # 文件上传 + 处理触发
-│   ├── meetings.py            # 会议 CRUD + 列表
-│   ├── speeches.py            # 发言 CRUD + 更新
-│   ├── knowledge_graph.py     # 知识图谱数据接口
-│   └── settings.py            # 用户模型配置
-├── services/
-│   ├── file_parser.py         # .txt/.md/.docx 解析
-│   ├── llm_client.py          # 多供应商 LLM 抽象层
-│   ├── text_processor.py      # 口语清理 / 金句 / 标签 / 情感
-│   └── knowledge_graph_builder.py  # 图谱数据构建
-└── tasks/
-    └── celery_tasks.py        # Celery 异步任务
-```
+每条上传内容对应一条 `content` 记录，支持两类来源：
 
-### 2.2 技术栈（严格遵循 TECH_ARCHITECTURE.md）
+- `meeting_minutes`
+- `other_text`
 
-| 组件 | 选型 | 版本约束 |
-|------|------|----------|
-| Web 框架 | FastAPI + Uvicorn | >=0.110 |
-| ORM | SQLAlchemy 2.0 (asyncio) | >=2.0 |
-| 数据库驱动 | asyncpg | >=0.29 |
-| 向量扩展 | pgvector (SQLAlchemy 集成) | >=0.2 |
-| 任务队列 | Celery + Redis | >=5.3 / >=7 |
-| 数据验证 | Pydantic v2 + pydantic-settings | >=2.6 |
-| 文件解析 | python-docx, python-magic, chardet | - |
-| LLM SDK | openai, anthropic, httpx | - |
-| 测试 | pytest, pytest-asyncio, pytest-cov, httpx | - |
+关键字段：
+
+- `id`
+- `user_id`
+- `title`
+- `source_type`
+- `content_date`
+- `source_file_name`
+- `source_file_path`
+- `source_file_size`
+- `file_type`
+- `status`
+- `ignored_reason`
+- `error_message`
+- `summary_text`
+- `created_at`
+- `updated_at`
+- `completed_at`
+
+### 2.2 思想金句 (`quotes`)
+
+每条内容可生成多条思想金句。  
+金句是图谱的核心内容单元，不再围绕逐条发言建模。
+
+关键字段：
+
+- `id`
+- `content_id`
+- `user_id`
+- `sequence_number`
+- `text`
+- `created_at`
+- `updated_at`
+
+### 2.3 领域 (`domains`)
+
+领域是系统预定义的稳定分类，当前默认包含：
+
+- 产品与业务
+- 技术与架构
+- 项目推进与交付
+- 组织协同与管理
+- 学习成长与认知
+- 方法论与决策
+- 人生选择与价值观
+- 运动健康与身心状态
+- 下一代教育与成长
+- 投资研究与交易决策
+- 其他
+
+### 2.4 金句-领域关联 (`quote_domains`)
+
+一条金句可关联多个领域。  
+知识图谱按领域聚合，边关系来自领域共现。
+
+### 2.5 领域关系 (`domain_relations`)
+
+图谱边关系由同一条内容中多个领域的共现，以及内容时间接近度共同计算。
 
 ---
 
-## 3. 数据库模型设计
-
-使用 **SQLAlchemy 2.0 DeclarativeBase + `Mapped[]`** 风格。
-
-### 3.1 实体关系
-
-```mermaid
-erDiagram
-    USER ||--o{ MEETING : has
-    USER ||--o{ TOPIC : has
-    USER ||--o{ GRAPH_LAYOUT : has
-    USER ||--o{ USER_MODEL_CONFIG : has
-    MEETING ||--o{ SPEECH : contains
-    TOPIC ||--o{ SPEECH : tagged
-    TOPIC ||--o{ TOPIC_RELATION : relates
-    TOPIC ||--o{ TOPIC_RELATION : relates
-```
-
-### 3.2 表定义
+## 3. 数据库表
 
 | 表名 | 说明 | 关键字段 |
 |------|------|----------|
 | `users` | 用户 | id, email, password_hash, created_at, updated_at |
-| `meetings` | 会议 | id, user_id(fk), title, meeting_date, source_file, file_size, status, created_at, updated_at |
-| `speeches` | 发言 | id, meeting_id(fk), timestamp, speaker, raw_text, cleaned_text, key_quotes(JSONB), topics(JSONB), sentiment, word_count, created_at, updated_at |
-| `topics` | 话题 | id, user_id(fk), name, speech_count, meeting_count, first_appearance, last_appearance, embedding(Vector(1536)), created_at, updated_at |
-| `topic_relations` | 话题关联 | id, topic_a_id(fk), topic_b_id(fk), co_occurrence_score, temporal_score, semantic_score, total_score, created_at |
-| `graph_layouts` | 图谱布局 | id, user_id(fk), layout_data(JSONB), version, updated_at |
-| `user_model_configs` | 模型配置 | id, user_id(fk), provider, name, api_key_encrypted, base_url, default_model, is_default, is_enabled, created_at, updated_at |
+| `contents` | 内容主记录 | id, user_id, title, source_type, content_date, status, summary_text |
+| `quotes` | 思想金句 | id, content_id, user_id, sequence_number, text |
+| `domains` | 预定义领域 | id, display_name, description, is_system_default, sort_order |
+| `quote_domains` | 金句与领域多对多 | quote_id, domain_id |
+| `domain_relations` | 领域关系 | user_id, domain_a_id, domain_b_id, total_score |
+| `graph_layouts` | 用户图谱布局缓存 | user_id, layout_data, version |
+| `user_model_configs` | 用户模型配置 | provider, name, api_key_encrypted, base_url, default_model |
+| `speaker_identities` | 说话人身份配置 | display_name, aliases, is_default |
+
+历史兼容表 `meetings / speeches / viewpoints / topics` 仍可能存在于数据库中，但已经不再属于当前主路径。
 
 ---
 
-## 4. API 路由设计
+## 4. API 路由
 
-| 路由文件 | 端点 | 方法 | 说明 |
-|----------|------|------|------|
-| `upload.py` | `/api/v1/upload` | POST | 上传会议纪要文件，返回 task_id（需 `Depends(get_current_user)`） |
-| `upload.py` | `/api/v1/upload/{task_id}/status` | GET | 轮询查询处理进度（返回 JSON）（需认证） |
-| `upload.py` | `/api/v1/upload/{task_id}/stream` | GET | SSE 实时推送处理进度（EventSource）（需认证） |
-| `meetings.py` | `/api/v1/meetings` | GET | 会议列表（分页、搜索：按 title / speaker / topic 模糊匹配）（需认证） |
-| `meetings.py` | `/api/v1/meetings/{meeting_id}` | GET | 会议详情（含 speeches）（需认证） |
-| `meetings.py` | `/api/v1/meetings/{meeting_id}` | DELETE | 删除会议（级联删除 speeches）（需认证） |
-| `speeches.py` | `/api/v1/meetings/{meeting_id}/speeches` | GET | 某会议下的发言列表（需认证） |
-| `speeches.py` | `/api/v1/speeches/{speech_id}` | GET | 发言详情（需认证） |
-| `speeches.py` | `/api/v1/speeches/{speech_id}` | PATCH | 更新发言（手动修正 cleaned_text/topics）（需认证） |
-| `knowledge_graph.py` | `/api/v1/knowledge-graph` | GET | 获取当前用户的知识图谱数据（nodes + edges）（需认证） |
-| `knowledge_graph.py` | `/api/v1/knowledge-graph/topics/{topic_id}/speeches` | GET | 某话题下的发言列表（需认证） |
-| `settings.py` | `/api/v1/settings/model` | GET | 获取模型配置列表（需认证） |
-| `settings.py` | `/api/v1/settings/model` | PUT | 更新模型配置（需认证） |
+### 4.1 认证
 
----
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/v1/auth/login` | POST | 登录 |
+| `/api/v1/auth/register` | POST | 注册 |
+| `/api/v1/auth/me` | GET | 获取当前用户 |
 
-## 5. 业务服务设计
+### 4.2 上传与处理
 
-### 5.1 文件解析服务 (`file_parser.py`)
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/v1/upload` | POST | 上传文件并创建异步处理任务 |
+| `/api/v1/upload/{task_id}/status` | GET | 查询任务状态 |
+| `/api/v1/process/{task_id}/stream` | GET | SSE 实时推送任务进度 |
 
-- `parse_txt(file_path)`：自动检测编码（UTF-8 / GBK），读取文本
-- `parse_md(file_path)`：读取内容（暂不支持 frontmatter 深度解析）
-- `parse_docx(file_path)`：使用 `python-docx` 读取 paragraphs
-- `parse_doc(file_path)`：使用 `antiword` 或 `libreoffice --headless --convert-to docx` 转换为 `.docx` 后解析（优先尝试系统命令 `antiword`）
-- `extract_speeches(text, target_speaker)`：基于正则 `[HH:MM:SS] 说话人：内容` 提取发言列表
-- `validate_file_type(file_path, allowed_types)`：使用 `python-magic` 检测 MIME 类型，白名单限制为 `.txt` / `.md` / `.doc` / `.docx`
+上传字段：
 
-**会议搜索实现策略**：`GET /api/v1/meetings` 的 `q` 参数通过 SQLAlchemy `selectinload` 或 `joinedload` 加载关联的 `speeches`，在 Python 层对 `meeting.title`、`speech.speaker`、`speech.topics (JSONB)`、`speech.raw_text` 进行模糊匹配并聚合评分（标题匹配权重 0.4，内容匹配 0.4，话题匹配 0.2）。数据库层对 `meetings.title` 和 `speeches.raw_text` 建立 GIN / trigram 索引（PostgreSQL `pg_trgm`），确保响应 `<500ms`。
+- `file`
+- `source_type`
+- `provider`
 
-### 5.2 LLM 客户端 (`llm_client.py`)
+其中：
 
-抽象基类 `BaseLLMClient`：
-- `async generate(messages, temperature, max_tokens) -> str`
-- `async embed(text) -> list[float]`
-- `count_tokens(text) -> int`
-- `get_context_limit() -> int`
+- `source_type` 仅支持 `meeting_minutes` / `other_text`
+- `provider` 对应用户已配置的模型提供商
 
-实现类：
-- `KimiClient`（基于 OpenAI 兼容接口）
-- `OpenAIClient`
-- `ClaudeClient`（基于 Anthropic SDK）
-- `OllamaClient`（基于 HTTP 调用本地接口）
+### 4.3 内容
 
-### 5.3 文本处理服务 (`text_processor.py`)
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/v1/contents` | GET | 内容列表（分页、搜索、状态筛选） |
+| `/api/v1/contents/{content_id}` | GET | 内容详情 |
+| `/api/v1/contents/{content_id}` | DELETE | 删除内容 |
+| `/api/v1/contents/{content_id}/summary` | PATCH | 修改发言总结 |
+| `/api/v1/contents/{content_id}/quotes/{quote_id}` | PATCH | 修改思想金句或其领域 |
+| `/api/v1/contents/{content_id}/quotes/{quote_id}` | DELETE | 删除思想金句 |
 
-- `clean_colloquial(text)` → 去除语气词、修正错别字
-- `extract_key_quotes(text)` → 0-3 条金句
-- `extract_topics(text)` → 1-3 个话题标签
-- `analyze_sentiment(text)` → positive/negative/neutral/mixed
-- `chunk_and_process(text, processor)` → 长文本分块处理（预留接口）
+### 4.4 领域图谱
 
-### 5.4 知识图谱构建 (`knowledge_graph_builder.py`)
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/v1/knowledge-graph` | GET | 获取领域图谱 |
+| `/api/v1/knowledge-graph/domains/{domain_id}` | GET | 获取单个领域详情及相关金句 |
+| `/api/v1/knowledge-graph/layout` | POST | 保存用户图谱布局 |
 
-- `build_graph(user_id, db_session)`：基于用户的 topics 和 speeches 生成 nodes + edges
-- `compute_topic_relations(topics)`：共现 + 语义相似度（使用 embedding cosine）+ 时间关联
-- `generate_layout_data(nodes, edges)`：基础力导向图数据（半径/位置），输出前端可用 JSON
+### 4.5 设置
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/v1/settings/model` | GET | 获取模型配置列表 |
+| `/api/v1/settings/model` | PUT | 更新模型配置 |
+| `/api/v1/settings/model/test` | POST | 测试模型连通性 |
+| `/api/v1/speaker-identities` | GET/POST | 获取或新增说话人身份 |
+| `/api/v1/speaker-identities/{identity_id}` | PUT/DELETE | 更新或删除说话人身份 |
 
 ---
 
-## 6. 异步任务设计 (Celery)
+## 5. 处理链路
 
-### 6.1 `process_meeting_task(task_id, meeting_id, file_path, speaker_identity, model_config)`
+当前异步任务是 `process_content_task`，不再使用历史 `process_meeting_task`。
 
-处理流水线：
-1. **解析文件** → 读取原始文本
-2. **提取发言** → 按目标说话人过滤
-3. **口语清理** → 调用 LLM 逐段清理
-4. **标签提取** → 为每段发言提取话题
-5. **构建图谱** → 更新 topic / topic_relation / graph_layout
-6. 每步更新进度到 Redis；同时通过 Celery 信号机制将进度写入 Redis Pub/Sub 通道，供 SSE 流推送。SSE 连接由 `upload.py` 的 `/api/v1/upload/{task_id}/stream` 端点维护。
+### 5.1 输入分流
 
-状态流转：`PENDING` → `PROCESSING` → `SUCCESS` / `FAILED`
+- `meeting_minutes`
+  - 先进行刘彬发言识别
+  - 再做发言总结和思想金句提炼
+- `other_text`
+  - 默认整份文本就是刘彬本人输出
+  - 直接做发言总结和思想金句提炼
 
-**Celery 中调用 async LLM 的策略**：在同步 Celery task 内部，通过 `asyncio.run()` 或 `asgiref.sync.async_to_sync()` 桥接调用 `llm_client` 的 `async` 方法。
+### 5.2 处理步骤
 
-**测试配置**：仅在测试环境（`pytest` fixture / `conftest.py`）中设置 `task_always_eager=True`，生产环境保持异步任务队列。
+1. `PARSING`
+2. `IDENTIFYING_SPEAKER`（仅会议纪要）
+3. `SUMMARIZING`
+4. `EXTRACTING_QUOTES`
+5. `BUILDING_GRAPH`
+6. `completed / ignored / failed`
 
-### 6.2 `update_knowledge_graph_task(user_id)`
+### 5.3 输出结果
 
-增量更新用户的知识图谱关联和布局数据。
+- `summary_text`
+- `quotes`
+- `quote.domain_ids`
 
----
-
-## 7. 配置与核心设计
-
-### 7.1 `core/config.py`
-
-使用 `pydantic-settings` 的 `SettingsConfigDict(env_file=".env")`：
-- `DATABASE_URL`
-- `REDIS_URL`
-- `SECRET_KEY`（用于 JWT 签名）
-- `ENCRYPTION_KEY`（用于 Fernet 对称加密 API Key，与 SECRET_KEY 分离）
-- `UPLOAD_DIR`
-- `MAX_UPLOAD_SIZE`
-- `KIMI_API_KEY`, `OPENAI_API_KEY`, `CLAUDE_API_KEY`
-
-**API Key 加密策略**：使用 `cryptography.fernet.Fernet` 对 `user_model_configs.api_key_encrypted` 进行对称加解密。`ENCRYPTION_KEY` 从环境变量读取，生产环境由运维统一管理。
-
-### 7.2 `core/database.py`
-
-- `async_engine = create_async_engine(settings.DATABASE_URL)`
-- `AsyncSessionLocal = async_sessionmaker(async_engine, class_=AsyncSession)`
-- `async def get_db() -> AsyncGenerator[AsyncSession, None]`
-
-### 7.3 `core/security.py`
-
-- `create_access_token(data, expires_delta)`
-- `verify_token(token)`
-- `get_current_user(token)`（FastAPI Depends 用）
+如果会议纪要中未检测到刘彬发言，则状态为 `ignored`，不会进入主时间线。
 
 ---
 
-## 8. 测试策略
+## 6. 图谱构建
 
-### 8.1 测试文件
+当前图谱构建器为 `DomainGraphBuilder`。
 
-| 测试文件 | 覆盖范围 |
-|----------|----------|
-| `tests/conftest.py` | async DB fixture (SQLite 内存)、TestClient fixture、mock LLM fixture、`get_db` override |
-| `tests/test_models.py` | 模型创建、relationship、级联删除 |
-| `tests/test_api_upload.py` | 上传接口、任务状态轮询 |
-| `tests/test_api_meetings.py` | 会议列表、详情、删除 |
-| `tests/test_llm_client.py` | mock HTTP 测试各 LLM 客户端 |
-| `tests/test_text_processor.py` | mock LLM 调用测试文本处理逻辑 |
+职责：
 
-### 8.2 测试原则
-- 外部依赖全部 Mock（LLM API、文件系统）
-- 数据库使用 SQLite `:memory:`（通过 `create_async_engine("sqlite+aiosqlite:///:memory:")`）
-- **pgvector 兼容处理**：测试 fixture 中，对 `topics.embedding` 列使用 `TypeDecorator` 或 Mock 覆盖，在 SQLite 测试时将其替换为普通 `TEXT`（存储 JSON 化的向量），避免 pgvector 特有类型在 SQLite 中不可用
-- FastAPI `app.dependency_overrides[get_db] = override_get_db` 确保测试使用独立 session
-- 使用 `pytest.mark.asyncio` 测试异步代码
-- 目标覆盖率 **>= 80%**
+- 确保默认领域存在
+- 统计内容级领域共现
+- 计算 `domain_relations`
+- 输出 `KnowledgeGraphData`
+- 持久化 `graph_layouts`
 
----
+图谱节点类型固定为：
 
-## 9. 代码规范
+- `domain`
 
-1. **类型提示**：所有函数必须有类型提示，`mypy --strict` 无错误
-2. **异常处理**：自定义 `SpeakSumException`，FastAPI 全局异常处理器转 HTTP 400/500
-3. **日志**：使用标准 `logging`，记录关键操作和错误
-4. **文档字符串**：Google 风格 docstring
-5. **代码格式**：`ruff format` + `ruff check` 通过
-6. **不可变性**：避免 mutating input数据，返回新对象
+图谱详情展开对象固定为：
+
+- `quotes`
 
 ---
 
-## 10. 依赖变更
+## 7. 测试口径
 
-### 新增生产依赖
-```bash
-uv add fastapi uvicorn python-multipart \
-    sqlalchemy asyncpg alembic pgvector \
-    celery redis \
-    openai anthropic httpx \
-    pydantic-settings python-docx python-magic chardet \
-    python-jose passlib python-dateutil cryptography
-```
+当前主验证集围绕新主路径展开：
 
-### 新增开发依赖
-```bash
-uv add --dev pytest-asyncio httpx
-```
+- `tests/test_content_processor.py`
+- `tests/test_celery_tasks.py`
+- `tests/test_api_upload.py`
+- `tests/test_api_contents.py`
+- `tests/test_api_knowledge_graph.py`
+- `tests/test_api_edge_cases.py`
+- `tests/test_schema_compatibility.py`
+
+历史 `meetings / speeches / viewpoints / topics` 测试已退场。
 
 ---
 
-## 11. 完成标准
+## 8. 当前实现结论
 
-- [x] 数据库模型完整，使用 SQLAlchemy 2.0 + pgvector
-- [x] API 路由实现，自动生成 Swagger 文档
-- [x] LLM 客户端支持 Kimi / OpenAI / Claude / Ollama
-- [x] 文件解析支持 .txt / .md / .docx
-- [x] Celery 异步任务实现
-- [x] 单元测试覆盖率 >= 80%
-- [x] 代码通过 `ruff check` 和 `mypy --strict`
-- [x] 提交并推送到 `feature/backend-impl` 分支
+SpeakSum 当前后端已经完成主语义切换：
+
+- 从“会议 + 发言列表”切到“内容 + 发言总结 + 思想金句”
+- 从“话题图谱”切到“领域图谱”
+- 从“逐条 speech/viewpoint 编辑”切到“summary/quote/domain 编辑”
+
+后续新增能力应继续围绕这套模型扩展，不再回到历史 `meeting/viewpoint/topic` 路径。

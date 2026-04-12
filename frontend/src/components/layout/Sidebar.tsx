@@ -1,13 +1,16 @@
-import { Menu } from 'antd';
+import { Button, Menu } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   HomeOutlined,
   ClockCircleOutlined,
   ApartmentOutlined,
   SettingOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { ReactNode } from 'react';
+import { useUIStore } from '@/stores/uiStore';
 
 interface MenuItem {
   key: string;
@@ -17,7 +20,7 @@ interface MenuItem {
 
 const menuItems: MenuItem[] = [
   { key: '/', icon: <HomeOutlined />, label: '首页' },
-  { key: '/timeline', icon: <ClockCircleOutlined />, label: '时间线' },
+  { key: '/timeline', icon: <ClockCircleOutlined />, label: '思想记录' },
   { key: '/graph', icon: <ApartmentOutlined />, label: '知识图谱' },
   { key: '/settings', icon: <SettingOutlined />, label: '设置' },
 ];
@@ -25,6 +28,7 @@ const menuItems: MenuItem[] = [
 export const Sidebar: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const { sidebarCollapsed, toggleSidebar } = useUIStore();
 
   // Get the base path for highlighting
   const currentPath = location.pathname.startsWith('/timeline')
@@ -34,19 +38,33 @@ export const Sidebar: React.FC = () => {
     : location.pathname;
 
   const handleClick = ({ key }: { key: string }) => {
-    console.log('Navigating to:', key);
     navigate(key);
-    console.log('Navigation called');
   };
 
   return (
-    <aside className="w-[200px] min-h-[calc(100vh-72px)] bg-bg-panel border-r border-line-default hidden lg:block">
+    <aside
+      data-testid="app-sidebar"
+      className={[
+        'min-h-[calc(100vh-72px)] bg-bg-panel border-r border-line-default hidden lg:flex lg:flex-col transition-[width] duration-300 ease-out',
+        sidebarCollapsed ? 'w-[88px]' : 'w-[220px]',
+      ].join(' ')}
+    >
+      <div className="flex justify-end px-3 pt-3">
+        <Button
+          type="text"
+          size="small"
+          aria-label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+          icon={sidebarCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+          onClick={toggleSidebar}
+        />
+      </div>
       <Menu
         mode="inline"
+        inlineCollapsed={sidebarCollapsed}
         selectedKeys={[currentPath]}
         items={menuItems as MenuProps['items']}
         onClick={handleClick}
-        className="bg-transparent border-0 pt-4"
+        className="bg-transparent border-0 pt-2 flex-1"
         style={{ background: 'transparent' }}
       />
     </aside>

@@ -1,4 +1,18 @@
-# 后端设计审查反馈文档
+# 后端设计审查反馈文档（历史归档）
+
+> 归档说明
+>
+> 本文档是对旧后端评审报告的反馈记录，讨论对象仍是已退场的 `meetings / speeches / topics` 与阶段性 `viewpoint` 模型，不再代表当前产品和接口契约。
+>
+> 当前有效文档请优先查看：
+> - `docs/PRODUCT_DESIGN.md`
+> - `docs/TECH_ARCHITECTURE.md`
+> - `docs/TECH_DESIGN.md`
+> - `docs/FRONTEND_DESIGN.md`
+> - `docs/backend-impl-design.md`
+> - `docs/openapi.yaml`
+>
+> 下文内容仅作为历史反馈与决策背景存档。
 
 **审查日期**: 2026-04-03  
 **审查文档**: `docs/BACKEND_DESIGN_REVIEW.md` (位于 develop 分支)  

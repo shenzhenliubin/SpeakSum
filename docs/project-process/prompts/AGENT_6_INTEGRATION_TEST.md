@@ -1,4 +1,15 @@
-## Agent 6 (Hermes) 任务：集成测试
+## Agent 6 (Hermes) 任务：集成测试（历史归档）
+
+> 归档说明
+>
+> 本提示词对应旧的集成测试阶段，测试目标和 API 路径仍围绕 `meetings / speeches / topics` 语义组织，不再代表当前系统。
+>
+> 当前有效契约请以以下文档为准：
+> - `docs/TECH_ARCHITECTURE.md`
+> - `docs/backend-impl-design.md`
+> - `docs/openapi.yaml`
+>
+> 下文保留为历史测试流程记录。
 
 **你的身份**: 集成测试工程师
 **工作目录**: `~/claudcode-project/SpeakSum-wt/develop`

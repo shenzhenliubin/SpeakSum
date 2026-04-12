@@ -11,7 +11,6 @@ import Upload from '@/pages/Upload';
 import ProcessingProgress from '@/pages/ProcessingProgress';
 import Settings from '@/pages/Settings';
 import ModelSettings from '@/pages/settings/ModelSettings';
-import IdentitySettings from '@/pages/settings/IdentitySettings';
 import GeneralSettings from '@/pages/settings/GeneralSettings';
 import Login from '@/pages/Login';
 import NotFound from '@/pages/NotFound';
@@ -43,7 +42,7 @@ export const router = createBrowserRouter([
                 element: <Timeline />,
               },
               {
-                path: ':meetingId',
+                path: ':contentId',
                 element: <MeetingDetail />,
               },
             ],
@@ -78,12 +77,12 @@ export const router = createBrowserRouter([
                 element: <ModelSettings />,
               },
               {
-                path: 'identities',
-                element: <IdentitySettings />,
-              },
-              {
                 path: 'general',
                 element: <GeneralSettings />,
+              },
+              {
+                path: 'identities',
+                element: <Navigate to="/settings/models" replace />,
               },
             ],
           },

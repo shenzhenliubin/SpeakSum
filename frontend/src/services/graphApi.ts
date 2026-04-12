@@ -1,5 +1,5 @@
 import { apiClient } from './api';
-import type { GraphLayout, Speech, Topic } from '@/types';
+import type { GraphDomainDetail, GraphLayout } from '@/types';
 
 export const graphApi = {
   // Get graph layout
@@ -8,9 +8,8 @@ export const graphApi = {
   getLayout: (): Promise<GraphLayout> =>
     apiClient.get('/knowledge-graph'),
 
-  // Get speeches for a topic
-  // GET /api/v1/knowledge-graph/topics/{topic_id}/speeches
-  // Returns: { topic: TopicNode, speeches: Speech[], total: number }
-  getTopicSpeeches: (topicId: string): Promise<{ topic: Topic; speeches: Speech[]; total: number }> =>
-    apiClient.get(`/knowledge-graph/topics/${topicId}/speeches`),
+  // Get domain details with related quotes
+  // GET /api/v1/knowledge-graph/domains/{domain_id}
+  getDomainDetails: (domainId: string): Promise<GraphDomainDetail> =>
+    apiClient.get(`/knowledge-graph/domains/${domainId}`),
 };

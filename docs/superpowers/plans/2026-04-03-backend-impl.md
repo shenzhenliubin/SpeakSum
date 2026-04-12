@@ -1,4 +1,13 @@
-# SpeakSum 后端实现 Implementation Plan
+# SpeakSum 后端实现 Implementation Plan（历史归档）
+
+> Archive note
+>
+> This execution plan targeted the old backend implementation centered on `meetings / speeches / topics`. It is kept only as historical delivery trace.
+>
+> Current implementation plan and docs:
+> - `docs/TECH_DESIGN.md`
+> - `docs/backend-impl-design.md`
+> - `docs/superpowers/plans/2026-04-06-personal-thought-system-rebuild.md`
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 

@@ -2,7 +2,33 @@ import axios, { type AxiosInstance, type AxiosError, type InternalAxiosRequestCo
 import { useAuthStore } from '@/stores/authStore';
 import { useUIStore } from '@/stores/uiStore';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+const LOCAL_LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+export function resolveApiBaseUrl(configuredUrl: string, currentHost?: string): string {
+  const normalizedUrl = configuredUrl.trim().replace(/\/+$/, '');
+
+  try {
+    const url = new URL(normalizedUrl);
+    const activeHost =
+      currentHost ??
+      (typeof window !== 'undefined' ? window.location.hostname : undefined);
+
+    if (
+      LOCAL_LOOPBACK_HOSTS.has(url.hostname) &&
+      (!activeHost || LOCAL_LOOPBACK_HOSTS.has(activeHost))
+    ) {
+      url.hostname = '127.0.0.1';
+    }
+
+    return url.toString().replace(/\/+$/, '');
+  } catch {
+    return normalizedUrl;
+  }
+}
+
+const API_BASE_URL = resolveApiBaseUrl(
+  import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api/v1'
+);
 
 class ApiClient {
   private client: AxiosInstance;
